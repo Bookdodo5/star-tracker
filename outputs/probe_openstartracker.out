@@ -1,0 +1,12 @@
+openstartracker setup_seconds 0.99
+openstartracker single correct 32 [2938, 2965, 2967, 3003, 3008, 3086, 3128, 3163, 3208, 3249]
+        ra        dec  fov_deg  mag_limit  n_stars outcome  correct      score  mean_residual_deg
+278.624177  -8.557018     12.0        6.5       29 correct     True 100.750000       0.000000e+00
+309.095251  27.631524     12.0        6.5       30 correct     True 100.750000       0.000000e+00
+ 33.903845  66.587129     12.0        6.5       11 correct     True 100.600000       0.000000e+00
+274.010293  40.049003     12.0        6.5       25 correct     True 100.750000       0.000000e+00
+ 46.120908  -6.945969     12.0        6.5       22 correct     True 100.450000       0.000000e+00
+133.487289  59.747098     12.0        6.5       14 correct     True 100.450000       0.000000e+00
+231.791443  45.186626     12.0        6.5       13 correct     True 100.432547       6.537220e-07
+159.629112 -38.186579     12.0        6.5       21 correct     True 100.600000       0.000000e+00
+openstartracker {'total': 8, 'sparse': 0, 'valid': 8, 'correct': 8, 'failure': 0, 'accuracy_pct': 100.0}

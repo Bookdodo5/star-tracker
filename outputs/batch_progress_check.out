@@ -1,0 +1,5 @@
+  batch 1/5 (20%) | accuracy=100.0% valid=1 | elapsed=0.2s eta=0.8s
+  batch 2/5 (40%) | accuracy=100.0% valid=2 | elapsed=0.2s eta=0.3s
+  batch 3/5 (60%) | accuracy=66.7% valid=3 | elapsed=0.6s eta=0.4s
+  batch 4/5 (80%) | accuracy=75.0% valid=4 | elapsed=0.6s eta=0.1s
+  batch 5/5 (100%) | accuracy=80.0% valid=5 | elapsed=0.8s eta=0.0s

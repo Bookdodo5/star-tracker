@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="877" height="877" viewBox="0 0 877 877">
+<style>text{font-family:Consolas,monospace;font-size:12px}.label{paint-order:stroke;stroke:#000;stroke-width:3px;stroke-linejoin:round}</style>
+<image href="C:\Users\PC\OneDrive\Documents\code\Star Tracker\Centroid\test-image\10h16m56s-59-51-22.png" x="0" y="0" width="877" height="877" />
+<circle cx="856.00" cy="780.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="861.00" y="785.00" fill="white">0</text>
+<circle cx="345.00" cy="852.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="350.00" y="857.00" fill="white">1</text>
+<circle cx="485.00" cy="268.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="490.00" y="273.00" fill="white">2</text>
+<circle cx="598.00" cy="200.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="603.00" y="205.00" fill="white">3</text>
+<circle cx="609.00" cy="697.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="614.00" y="702.00" fill="white">4</text>
+<circle cx="243.00" cy="145.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="248.00" y="150.00" fill="white">5</text>
+<circle cx="299.00" cy="668.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="304.00" y="673.00" fill="white">6</text>
+<circle cx="610.00" cy="81.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="615.00" y="86.00" fill="white">7</text>
+<circle cx="673.00" cy="873.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="678.00" y="878.00" fill="white">8</text>
+<circle cx="676.00" cy="724.00" r="3" fill="white" stroke="black" stroke-width="1" />
+<text class="label" x="681.00" y="729.00" fill="white">9</text>
+</svg>

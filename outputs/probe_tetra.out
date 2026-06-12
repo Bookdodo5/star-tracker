@@ -1,0 +1,12 @@
+tetra setup_seconds 27.71
+tetra single failure 32 [4631, 4965, 4991, 5147]
+        ra        dec  fov_deg  mag_limit  n_stars outcome  correct    score  mean_residual_deg
+278.624177  -8.557018     12.0        6.5       29 failure    False 0.004697                NaN
+309.095251  27.631524     12.0        6.5       30 failure    False 0.004688                NaN
+ 33.903845  66.587129     12.0        6.5       11 failure    False 0.002216                NaN
+274.010293  40.049003     12.0        6.5       25 failure    False 0.002844                NaN
+ 46.120908  -6.945969     12.0        6.5       22 failure    False 0.005586                NaN
+133.487289  59.747098     12.0        6.5       14 failure    False 0.005298                NaN
+231.791443  45.186626     12.0        6.5       13 failure    False 0.002868                NaN
+159.629112 -38.186579     12.0        6.5       21 failure    False 0.004232                NaN
+tetra {'total': 8, 'sparse': 0, 'valid': 8, 'correct': 0, 'failure': 8, 'accuracy_pct': 0.0}

@@ -1,0 +1,28 @@
+  batch 1/20 (5%) | accuracy=100.0% valid=1 | elapsed=0.0s eta=0.1s
+  batch 3/20 (15%) | accuracy=100.0% valid=3 | elapsed=0.2s eta=1.0s
+  batch 5/20 (25%) | accuracy=100.0% valid=5 | elapsed=1.1s eta=3.3s
+  batch 7/20 (35%) | accuracy=85.7% valid=7 | elapsed=2.9s eta=5.4s
+  batch 9/20 (45%) | accuracy=88.9% valid=9 | elapsed=3.9s eta=4.7s
+  batch 11/20 (55%) | accuracy=90.9% valid=11 | elapsed=4.7s eta=3.9s
+  batch 13/20 (65%) | accuracy=84.6% valid=13 | elapsed=6.8s eta=3.7s
+  batch 15/20 (75%) | accuracy=86.7% valid=15 | elapsed=7.6s eta=2.5s
+  batch 17/20 (85%) | accuracy=88.2% valid=17 | elapsed=7.8s eta=1.4s
+  batch 19/20 (95%) | accuracy=89.5% valid=19 | elapsed=8.7s eta=0.5s
+  batch 20/20 (100%) | accuracy=90.0% valid=20 | elapsed=9.7s eta=0.0s
+  batch 1/20 (5%) | accuracy=100.0% valid=1 | elapsed=0.8s eta=14.7s
+  batch 3/20 (15%) | accuracy=100.0% valid=3 | elapsed=2.3s eta=13.3s
+  batch 5/20 (25%) | accuracy=100.0% valid=5 | elapsed=4.0s eta=12.0s
+  batch 7/20 (35%) | accuracy=100.0% valid=7 | elapsed=5.9s eta=10.9s
+  batch 9/20 (45%) | accuracy=100.0% valid=9 | elapsed=7.6s eta=9.2s
+  batch 11/20 (55%) | accuracy=100.0% valid=11 | elapsed=9.4s eta=7.7s
+  batch 12/20 (60%) | accuracy=100.0% valid=12 | elapsed=10.3s eta=6.9s
+  batch 13/20 (65%) | accuracy=100.0% valid=13 | elapsed=11.3s eta=6.1s
+  batch 14/20 (70%) | accuracy=100.0% valid=14 | elapsed=12.3s eta=5.3s
+  batch 15/20 (75%) | accuracy=100.0% valid=15 | elapsed=13.3s eta=4.4s
+  batch 16/20 (80%) | accuracy=100.0% valid=16 | elapsed=14.1s eta=3.5s
+  batch 17/20 (85%) | accuracy=100.0% valid=17 | elapsed=14.9s eta=2.6s
+  batch 18/20 (90%) | accuracy=100.0% valid=18 | elapsed=15.9s eta=1.8s
+  batch 19/20 (95%) | accuracy=100.0% valid=19 | elapsed=16.7s eta=0.9s
+  batch 20/20 (100%) | accuracy=100.0% valid=20 | elapsed=17.5s eta=0.0s
+{'algorithm': 'tetra', 'setup_seconds': 0.26187629997730255, 'single_seconds': 0.39232410001568496, 'batch20_seconds': 9.660495299845934, 'avg_identify_seconds': 0.4830247649922967, 'memory_after_setup_mb': 108.14453125, 'memory_after_batch_mb': 108.984375, 'single_outcome': 'correct', 'batch_accuracy_pct': 90.0}
+{'algorithm': 'pyramid', 'setup_seconds': 0.0937896000687033, 'single_seconds': 1.0365237998776138, 'batch20_seconds': 17.527212099870667, 'avg_identify_seconds': 0.8763606049935333, 'memory_after_setup_mb': 96.9765625, 'memory_after_batch_mb': 98.79296875, 'single_outcome': 'correct', 'batch_accuracy_pct': 100.0}

@@ -1,0 +1,20 @@
+FOV=8 mag=<=5 summary={'total': 8, 'sparse': 6, 'valid': 2, 'correct': 2, 'failure': 0, 'accuracy_pct': 100.0}
+FOV=8 mag=<=6 summary={'total': 8, 'sparse': 3, 'valid': 5, 'correct': 4, 'failure': 1, 'accuracy_pct': 80.0}
+       ra       dec  n_stars     score  mean_residual_deg
+33.903845 66.587129        4 44.034765           0.034552
+FOV=8 mag=<=6.5 summary={'total': 8, 'sparse': 0, 'valid': 8, 'correct': 5, 'failure': 3, 'accuracy_pct': 62.5}
+        ra        dec  n_stars     score  mean_residual_deg
+ 33.903845  66.587129        5 52.318226           0.021742
+133.487289  59.747098        4 41.503422           0.051460
+159.629112 -38.186579        4 42.889261           0.051526
+FOV=8 mag=ALL summary={'total': 8, 'sparse': 0, 'valid': 8, 'correct': 5, 'failure': 3, 'accuracy_pct': 62.5}
+        ra        dec  n_stars     score  mean_residual_deg
+ 33.903845  66.587129        7 60.557719           0.264282
+133.487289  59.747098        4 41.503422           0.051460
+159.629112 -38.186579        4 42.889261           0.051526
+FOV=12 mag=<=5 summary={'total': 8, 'sparse': 2, 'valid': 6, 'correct': 6, 'failure': 0, 'accuracy_pct': 100.0}
+FOV=12 mag=<=6 summary={'total': 8, 'sparse': 0, 'valid': 8, 'correct': 8, 'failure': 0, 'accuracy_pct': 100.0}
+FOV=12 mag=<=6.5 summary={'total': 8, 'sparse': 0, 'valid': 8, 'correct': 8, 'failure': 0, 'accuracy_pct': 100.0}
+FOV=12 mag=ALL summary={'total': 8, 'sparse': 0, 'valid': 8, 'correct': 8, 'failure': 0, 'accuracy_pct': 100.0}
+FOV=18 mag=<=5 summary={'total': 8, 'sparse': 0, 'valid': 8, 'correct': 8, 'failure': 0, 'accuracy_pct': 100.0}
+FOV=18 mag=<=6 summary={'total': 8, 'sparse': 0, 'valid': 8, 'correct': 8, 'failure': 0, 'accuracy_pct': 100.0}

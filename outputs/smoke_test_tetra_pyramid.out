@@ -1,0 +1,18 @@
+  batch 1/8 (12%) | accuracy=100.0% valid=1 | elapsed=0.0s eta=0.1s
+  batch 2/8 (25%) | accuracy=100.0% valid=2 | elapsed=0.0s eta=0.1s
+  batch 3/8 (38%) | accuracy=100.0% valid=3 | elapsed=0.2s eta=0.3s
+  batch 4/8 (50%) | accuracy=100.0% valid=4 | elapsed=0.7s eta=0.7s
+  batch 5/8 (62%) | accuracy=100.0% valid=5 | elapsed=1.1s eta=0.7s
+  batch 6/8 (75%) | accuracy=100.0% valid=6 | elapsed=2.0s eta=0.7s
+  batch 7/8 (88%) | accuracy=85.7% valid=7 | elapsed=3.0s eta=0.4s
+  batch 8/8 (100%) | accuracy=87.5% valid=8 | elapsed=4.1s eta=0.0s
+tetra correct {'total': 8, 'sparse': 0, 'valid': 8, 'correct': 7, 'failure': 1, 'accuracy_pct': 87.5}
+  batch 1/8 (12%) | accuracy=100.0% valid=1 | elapsed=0.8s eta=5.9s
+  batch 2/8 (25%) | accuracy=100.0% valid=2 | elapsed=1.9s eta=5.7s
+  batch 3/8 (38%) | accuracy=100.0% valid=3 | elapsed=3.6s eta=6.0s
+  batch 4/8 (50%) | accuracy=100.0% valid=4 | elapsed=4.6s eta=4.6s
+  batch 5/8 (62%) | accuracy=100.0% valid=5 | elapsed=5.5s eta=3.3s
+  batch 6/8 (75%) | accuracy=100.0% valid=6 | elapsed=6.4s eta=2.1s
+  batch 7/8 (88%) | accuracy=100.0% valid=7 | elapsed=7.7s eta=1.1s
+  batch 8/8 (100%) | accuracy=100.0% valid=8 | elapsed=8.6s eta=0.0s
+pyramid correct {'total': 8, 'sparse': 0, 'valid': 8, 'correct': 8, 'failure': 0, 'accuracy_pct': 100.0}

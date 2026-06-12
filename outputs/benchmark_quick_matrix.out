@@ -1,0 +1,42 @@
+Running FOV=8, magnitude=<=5, samples=8 ...
+  accuracy=100.0% valid=2 time=1.9s
+Running FOV=8, magnitude=<=6, samples=8 ...
+  accuracy=100.0% valid=5 time=7.1s
+Running FOV=8, magnitude=<=6.5, samples=8 ...
+  accuracy=100.0% valid=8 time=10.2s
+Running FOV=8, magnitude=ALL, samples=8 ...
+  accuracy=87.5% valid=8 time=10.2s
+Running FOV=12, magnitude=<=5, samples=8 ...
+  accuracy=100.0% valid=6 time=6.5s
+Running FOV=12, magnitude=<=6, samples=8 ...
+  accuracy=100.0% valid=8 time=12.0s
+Running FOV=12, magnitude=<=6.5, samples=8 ...
+  accuracy=100.0% valid=8 time=12.5s
+Running FOV=12, magnitude=ALL, samples=8 ...
+  accuracy=100.0% valid=8 time=12.3s
+Running FOV=18, magnitude=<=5, samples=8 ...
+  accuracy=100.0% valid=8 time=9.6s
+Running FOV=18, magnitude=<=6, samples=8 ...
+  accuracy=100.0% valid=8 time=9.3s
+Running FOV=18, magnitude=<=6.5, samples=8 ...
+  accuracy=100.0% valid=8 time=9.7s
+Running FOV=18, magnitude=ALL, samples=8 ...
+  accuracy=100.0% valid=8 time=9.6s
+ FOV   <=5   <=6  <=6.5   ALL
+ 8.0 100.0 100.0  100.0  87.5
+12.0 100.0 100.0  100.0 100.0
+18.0 100.0 100.0  100.0 100.0
+ FOV Magnitude   seconds  accuracy_pct
+ 8.0       <=5  1.906410         100.0
+ 8.0       <=6  7.075626         100.0
+ 8.0     <=6.5 10.187098         100.0
+ 8.0       ALL 10.231395          87.5
+12.0       <=5  6.470303         100.0
+12.0       <=6 12.000183         100.0
+12.0     <=6.5 12.527124         100.0
+12.0       ALL 12.340106         100.0
+18.0       <=5  9.593554         100.0
+18.0       <=6  9.281391         100.0
+18.0     <=6.5  9.720030         100.0
+18.0       ALL  9.637255         100.0
+total_seconds=110.99

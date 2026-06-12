@@ -1,0 +1,6 @@
+sample_index,valid,observed_stars,expected_hrs,tetra_success,tetra_correct,tetra_time_us,tetra_hrs,pyramid_success,pyramid_correct,pyramid_time_us,pyramid_hrs
+0,true,10,"215;271;167;258;166;178;262;214;259;277",false,false,38000,"",true,false,454000,"8988;9037;8982;9029;8980;9031;9065"
+1,true,10,"8974;592;581;240;333;774;20;572;597;386",false,false,65000,"",true,false,360000,"8150;8506;8465;8426;8442;8374"
+2,true,10,"458;335;417;390;477;483;469;324;430;476",false,false,47000,"",true,false,376000,"1842;1898;1834;1861;1837;1970;1789"
+3,true,10,"472;566;440;520;519;506;487;486;541;460",false,false,43000,"",true,false,588000,"4257;4326;4537;4325;4338;4276"
+4,true,10,"603;620;643;604;477;483;469;543;476;628",false,false,39000,"",true,false,688000,"4615;4401;4710;4611;4607;4790"
