@@ -1,3 +1,0 @@
-tetra correct {'total': 8, 'sparse': 0, 'valid': 8, 'correct': 7, 'failure': 1, 'accuracy_pct': 87.5}
-openstartracker correct {'total': 8, 'sparse': 0, 'valid': 8, 'correct': 8, 'failure': 0, 'accuracy_pct': 100.0}
-pyramid correct {'total': 8, 'sparse': 0, 'valid': 8, 'correct': 8, 'failure': 0, 'accuracy_pct': 100.0}

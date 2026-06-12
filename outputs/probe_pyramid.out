@@ -1,3 +1,0 @@
-pyramid setup_seconds 0.88
-pyramid single correct 32 [2938, 2967, 3003, 3008, 3086, 3128, 3163, 3249]
-pyramid {'total': 3, 'sparse': 0, 'valid': 3, 'correct': 3, 'failure': 0, 'accuracy_pct': 100.0}

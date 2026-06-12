@@ -1,7 +1,0 @@
-dec_sign,fov_deg,matches,mean_error_px,rank_corr,scale,rotation_deg
-positive,10,6,13.171,-0.624,0.8052,176.036
-positive,15,8,16.46,0.364,0.8028,-56.765
-positive,20,10,20.01,-0.159,0.8733,23.016
-negative,10,8,13.013,0.342,1.0893,81.763
-negative,15,10,21.9,0.214,0.82,5.623
-negative,20,10,18.137,0.785,0.8485,-43.534

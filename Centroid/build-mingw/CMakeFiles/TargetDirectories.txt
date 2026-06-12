@@ -1,4 +1,0 @@
-C:/Users/PC/OneDrive/Documents/code/Star Tracker/Centroid/build-mingw/CMakeFiles/star_tracker.dir
-C:/Users/PC/OneDrive/Documents/code/Star Tracker/Centroid/build-mingw/CMakeFiles/hls_preprocess_file_test.dir
-C:/Users/PC/OneDrive/Documents/code/Star Tracker/Centroid/build-mingw/CMakeFiles/edit_cache.dir
-C:/Users/PC/OneDrive/Documents/code/Star Tracker/Centroid/build-mingw/CMakeFiles/rebuild_cache.dir
