@@ -1,0 +1,52 @@
+# ── Build directories ─────────────────────────────────────────────────────────
+centroid/build/
+centroid/build-mingw/
+Centroid/build/
+Centroid/build-mingw/
+identifier/build/
+identifier/generated/
+identifier/build-generated/
+identifier/build-generated-release/
+C/build/
+C/build-generated/
+C/build-generated-release/
+C/build-mingw/
+
+# ── CMake cache files that may appear outside named build dirs ────────────────
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# ── Compiled binaries and object files ───────────────────────────────────────
+*.exe
+*.a
+*.o
+*.obj
+
+# ── Test / run outputs and cached computations ────────────────────────────────
+outputs/
+cache/
+stars.csv
+
+# ── Rendered / converted image intermediates ──────────────────────────────────
+# .ppm files are generated from .png sources via png_to_ppm.ps1
+# .pgm files are centroid-pipeline debug dumps (DoG, threshold, morph, gray)
+*.ppm
+*.pgm
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# ── Archived / retired code (kept locally for reference, not tracked) ──────────
+archive/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── OMC ───────────────────────────────────────────────
+.omc/state/sessions/
+.omc/state/hud-stdin-cache.json
+.claude/

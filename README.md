@@ -1,37 +1,245 @@
-# Star Tracker Experiments
+# Star Tracker
 
-This repo contains local Jupyter notebook experiments for star-identification algorithms using the Yale Bright Star Catalog file `catalog.bin`.
+C implementation of TETRA and Pyramid star-identification algorithms, with a C++ centroid
+extractor and Python tooling for testing, evaluation, and data fetching.
 
-## Layout
+**Current results:** TETRA 100%, Pyramid 100% on synthetic data; TETRA 100% on real DSS
+images (13 fields, FOV=10°, 0.5° tolerance); Pyramid ~23% on real images (zero false
+positives). See [`docs/REPORT.md`](docs/REPORT.md) for full analysis.
 
-- `notebooks/` contains the clean runnable notebooks.
-- `src/star_tracker_core.py` contains shared catalog parsing, database builders, matchers, plotting, and evaluation helpers.
-- `data/catalog.bin` is the catalog input copied from the original Tetra folder.
-- `cache/` stores generated matcher databases so reruns are fast.
-- `outputs/` stores generated plots, smoke-test logs, and experiment artifacts.
-- `openstartracker/` is archived reference material; it is not part of the active comparison.
-- `archive/legacy/` keeps the original `Tetra.ipynb` before cleanup.
+---
 
-## Notebooks
-
-- `notebooks/Tetra.ipynb`
-- `notebooks/Pyramid_StarTracker.ipynb`
-
-Each notebook follows the same flow:
-
-1. Load `catalog.bin`.
-2. Build or load the cached algorithm database.
-3. Run a single identification test.
-4. Run a batch test.
-5. Generate an FOV/magnitude accuracy matrix.
-6. Print findings.
-
-## Validation
-
-Run:
+## Quick Start
 
 ```powershell
-python scripts/smoke_test.py
+.\run.ps1 build                                    # configure + build all targets
+.\run.ps1 test                                     # unit test + synthetic benchmark
+.\run.ps1 identify <image.png|.ppm> [fov]          # full pipeline: image → attitude
+.\run.ps1 fetch --ra 83.8 --dec -5.4 --fov 10     # download a DSS image and identify it
 ```
 
-The smoke test uses a small deterministic batch to catch path, database, and matcher regressions before running full notebook sweeps.
+Prerequisites: MinGW (GCC 13+), CMake 3.20+, Python 3.10+ with `numpy`, `astropy`,
+`requests`, `pandas`.
+
+---
+
+## Repository Layout
+
+```
+run.ps1                       Single entry point (build / test / identify / fetch)
+CLAUDE.md                     AI guidance for this codebase
+data/catalog.bin              Yale Bright Star Catalog (~9,100 entries, binary)
+
+identifier/                   C star identifier
+    src/                      Algorithm implementations
+        camera_model.c        Pixel → unit vector (east-left astronomical convention)
+        identify_tetra.c      TETRA: 4-star pattern → KD-tree lookup → verify
+        identify_pyramid.c    Pyramid: seed pair + grow → verify
+        verify.c              Shared verifier (catalog-only, algorithm-neutral)
+        attitude.c            TRIAD solver for 2–4 correspondences
+        star_math.c           Angular distance, Q15 ↔ float, matrix ops
+        catalog_db.c          Catalog array + HR lookup + vector decode
+        compare.c / batch_*   Demo and batch drivers
+    include/                  Headers (star_types.h, verify.h, tetra_db.h, pyramid_db.h)
+    generated/                Auto-generated C arrays (catalog, TETRA KD-tree, Pyramid pairs)
+    tools/                    Python DB generators
+        export_catalog_db.py  Write catalog_db_generated.c from data/catalog.bin
+        export_tetra_db.py    Write tetra_db_generated.c  (~44 MB, takes ~10 min)
+        export_pyramid_db.py  Write pyramid_db_generated.c (~9 MB, takes ~1 min)
+    CMakeLists.txt
+
+centroid/                     C++ image → centroids extractor
+    centroid_extract.cpp      DoG + threshold + morphological open + connected components
+    centroid_cli.cpp          Command-line runner: PPM in → stars.csv out
+    tools/png_to_ppm.ps1      Convert PNG to binary PPM (P6) via System.Drawing
+    test-image/               Sample test images
+    CMakeLists.txt
+
+src/
+    star_tracker_core.py      Shared Python library: catalog parsing, DB builders, unit vectors
+
+scripts/                      Python tools
+    fetch_dss_image.py        Download a DSS2 Red FITS image and convert to PPM
+    render_catalog_test_image.py  Render a synthetic star field from the catalog
+    diagnose_dss_centroids.py     Test 4 centroid orientations vs projected catalog truth
+    batch_real_image_compare.py   Batch real-image accuracy over many DSS fields
+    parity_harness_tetra.py       C vs Python TETRA divergence diagnostic
+    parity_harness_pyramid.py     C vs Python Pyramid divergence diagnostic
+    smoke_test.py                 Quick regression check
+
+docs/
+    REPORT.md                 TETRA vs Pyramid deep analysis (algorithms, timing, problems, fixes)
+
+archive/                      Retired notebooks and one-off scripts (git-ignored)
+```
+
+---
+
+## Build
+
+Build all targets at once:
+
+```powershell
+.\run.ps1 build
+```
+
+Or manually:
+
+```powershell
+# C identifier (all targets)
+cmake -S identifier -B identifier\build-generated-release -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+cmake --build identifier\build-generated-release --target demo_centroid_compare batch_synthetic_compare test_star_identifier
+
+# Centroid extractor
+cmake -S centroid -B centroid\build-mingw -G "MinGW Makefiles"
+cmake --build centroid\build-mingw --target centroid_extract
+```
+
+The generated C database files in `identifier/generated/` are pre-built and committed.
+Regenerate them only if you change the catalog filtering or database parameters:
+
+```powershell
+python identifier\tools\export_catalog_db.py
+python identifier\tools\export_pyramid_db.py   # ~1 min
+python identifier\tools\export_tetra_db.py     # ~10 min, produces ~44 MB file
+```
+
+---
+
+## Test
+
+**Unit test** (checks C math helpers and verifier):
+
+```powershell
+.\run.ps1 test
+# expected: "C star identifier tests passed" + synthetic benchmark table
+```
+
+Or directly:
+
+```powershell
+.\identifier\build-generated-release\test_star_identifier.exe
+```
+
+**Synthetic batch benchmark** (bypasses camera model; builds observed vectors from catalog):
+
+```powershell
+.\identifier\build-generated-release\batch_synthetic_compare.exe 100 10 10 outputs\c_batch_fov10.csv
+```
+
+Prints a summary table (Accuracy%, Mean_ms, DB_ms, Verify_ms, DB_MB) and writes per-image
+timing to `outputs/benchmark_latest.csv`.
+
+**Python smoke test:**
+
+```powershell
+python scripts\smoke_test.py
+```
+
+---
+
+## Full Pipeline
+
+### From a PNG or PPM image
+
+```powershell
+.\run.ps1 identify path\to\image.png 10
+```
+
+Steps it runs:
+1. Convert PNG → PPM (if needed) via `centroid\tools\png_to_ppm.ps1`.
+2. Run `centroid\build-mingw\centroid_extract.exe` → `outputs\<name>_stars.csv`.
+3. Run `identifier\build-generated-release\demo_centroid_compare.exe` → attitude printed.
+
+### Download a DSS field and identify it
+
+```powershell
+.\run.ps1 fetch --ra 83.8 --dec -5.4 --fov 10
+```
+
+Equivalent manual steps:
+
+```powershell
+python scripts\fetch_dss_image.py --ra 83.8 --dec -5.4 --fov 10 --size 877 --output outputs\test_dss.ppm
+.\centroid\build-mingw\centroid_extract.exe outputs\test_dss.ppm outputs\test_dss_stars.csv
+.\identifier\build-generated-release\demo_centroid_compare.exe outputs\test_dss_stars.csv 877 877 10
+```
+
+### Batch real-image accuracy test
+
+```powershell
+python scripts\batch_real_image_compare.py --count 15 --fov 10 --tolerance-deg 0.5
+```
+
+Caches images in `cache/real_images/`; writes `outputs/real_batch_latest.csv`.
+
+---
+
+## Diagnostics
+
+**Centroid orientation check** (verify east-left convention after any camera model change):
+
+```powershell
+python scripts\diagnose_dss_centroids.py --stars outputs\test_dss_stars.csv --ra 83.8 --dec -5.4 --fov 10 --size 877
+```
+
+Should report `mirror_x` orientation with the highest centroid match count and lowest pixel
+error. Any other orientation winning means the camera model has a chirality bug.
+
+**C vs Python parity** (diagnose divergence on the Orion field):
+
+```powershell
+python scripts\parity_harness_tetra.py
+python scripts\parity_harness_pyramid.py
+```
+
+**Controlled catalog-rendered image:**
+
+```powershell
+python scripts\render_catalog_test_image.py --output outputs\render.ppm --truth outputs\render_truth.csv --fov 10 --image-size 877
+.\centroid\build-mingw\centroid_extract.exe outputs\render.ppm outputs\render_stars.csv
+.\identifier\build-generated-release\demo_centroid_compare.exe outputs\render_stars.csv 877 877 10
+```
+
+---
+
+## Architecture Notes
+
+### Image orientation convention
+
+The camera model (`identifier/src/camera_model.c`) uses the **physical astronomical
+convention: north up, east left**. Pixel X increases right (west), pixel Y increases down
+(south). `pixel_to_unit_vector` negates both axes to produce a right-handed
+(east, north, boresight) frame aligned with the catalog. DSS images from `fetch_dss_image.py`
+and the synthetic renderer both use the same convention.
+
+If centroids look correct but the attitude is wrong or mirrored, run the orientation
+diagnostic above — a chirality flip in the camera model is the most common culprit.
+
+### Independence rule
+
+TETRA and Pyramid never confirm or reject each other. Both receive the same `ObservedStar[]`,
+call the shared `verify_attitude()`, and return independent `MatchResult` values. The
+verifier checks only catalog geometry.
+
+### Database encoding
+
+- Unit vectors: Q15 (int16 in [-32767, 32767] → [-1, 1])
+- TETRA features: uint16 normalized edge ratios (0–65535)
+- Pyramid separations: uint16 on a linear 0–15° scale
+- Residuals: uint16 arcseconds, saturated at 65535
+
+---
+
+## Performance
+
+| Metric          | Target  | Synthetic           | Real DSS (Orion) |
+|-----------------|---------|---------------------|------------------|
+| Accuracy        | ≥ 90%   | 100% (both)         | TETRA 100%, Pyramid ~23–40% |
+| TETRA time      | < 333 ms | 0.42 ms/frame      | ~5 ms/frame ✅   |
+| Pyramid time    | < 333 ms | 5.05 ms/frame      | ~91 ms/frame ✅  |
+| TETRA DB size   | < 50 MB | 44.8 MB             | —                |
+| Pyramid DB size | < 10 MB | 9.0 MB              | —                |
+
+The June 2026 catalog KD-tree optimization reduced verify time from ~4 ms to < 0.01 ms
+(~400× speedup), putting both algorithms well within the 3–5 Hz real-image target.

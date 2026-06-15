@@ -116,7 +116,10 @@ def normalize(vector: tuple[float, float, float]) -> tuple[float, float, float]:
 
 def camera_basis(center_ra_deg: float, center_dec_deg: float) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
     """
-    Builds catalog-to-camera basis vectors with pixel Y increasing downward.
+    Builds catalog-to-camera basis vectors matching the physical astronomical
+    image convention: north up, east left, pixel Y increasing downward.
+    Pixel X increases to the right (west) and pixel Y increases downward (south),
+    so the X basis is -east and the Y basis is -north.
     """
 
     center = unit_vector(center_ra_deg, center_dec_deg)
@@ -124,7 +127,7 @@ def camera_basis(center_ra_deg: float, center_dec_deg: float) -> tuple[tuple[flo
     dec_rad = math.radians(center_dec_deg)
     east = (-math.sin(ra_rad), math.cos(ra_rad), 0.0)
     north = (-math.sin(dec_rad) * math.cos(ra_rad), -math.sin(dec_rad) * math.sin(ra_rad), math.cos(dec_rad))
-    return normalize(east), normalize((-north[0], -north[1], -north[2])), normalize(center)
+    return normalize((-east[0], -east[1], -east[2])), normalize((-north[0], -north[1], -north[2])), normalize(center)
 
 
 def project_stars(
