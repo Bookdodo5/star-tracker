@@ -1,8 +1,7 @@
 #include "attitude.h"
 #include "camera_model.h"
 #include "catalog_db.h"
-#include "compare.h"
-#include "pyramid_db.h"
+#include "identify_tetra.h"
 #include "star_math.h"
 #include "tetra_db.h"
 #include "verify.h"
@@ -47,44 +46,6 @@ const TetraKdNode tetra_kd_nodes[] = {
 
 const uint32_t tetra_kd_node_count = 1;
 
-const float pyramid_max_sep_rad = 3.14159265358979323846f;
-const PairRow pyramid_pairs_by_sep[] = {
-    {1, 2, 32768},
-    {1, 3, 32768},
-    {2, 3, 32768},
-    {2, 4, 32768},
-    {3, 4, 32768},
-    {1, 4, 65535},
-};
-
-const uint32_t pyramid_pair_count = 6;
-
-const PairNeighbor pyramid_neighbors_by_hr[] = {
-    {2, 32768},
-    {3, 32768},
-    {4, 65535},
-    {1, 32768},
-    {3, 32768},
-    {4, 32768},
-    {1, 32768},
-    {2, 32768},
-    {4, 32768},
-    {1, 65535},
-    {2, 32768},
-    {3, 32768},
-};
-
-const uint32_t pyramid_neighbor_count = 12;
-const uint32_t pyramid_neighbor_start_count = 6;
-const uint32_t pyramid_neighbor_starts[] = {
-    0,
-    0,
-    3,
-    6,
-    9,
-    12,
-};
-
 /**
  * Verifies that the camera center maps to the optical axis.
  */
@@ -125,30 +86,29 @@ static void test_verify_identity(void) {
 }
 
 /**
- * Verifies that TETRA and Pyramid both run independently on the same field.
+ * Verifies that TETRA identifies the mock field.
  */
-static void test_compare_independent(void) {
+static void test_tetra_identify(void) {
     ObservedStar observed_stars[] = {
         {1.0f, 0.0f, 0.0f, 100},
         {0.0f, 1.0f, 0.0f, 100},
         {0.0f, 0.0f, 1.0f, 100},
         {-1.0f, 0.0f, 0.0f, 100},
     };
-    CompareResult result = compare_tetra_pyramid(observed_stars, 4);
-    assert(result.tetra.success);
-    assert(result.pyramid.success);
-    assert(result.tetra.count == 4);
-    assert(result.pyramid.count == 4);
+    MatchResult result;
+    identify_tetra(observed_stars, 4, &result);
+    assert(result.success);
+    assert(result.count == 4);
 }
 
 /**
- * Runs all C unit tests for the independent comparison core.
+ * Runs all C unit tests for the identification core.
  */
 int main(void) {
     test_camera_center();
     test_angle();
     test_verify_identity();
-    test_compare_independent();
+    test_tetra_identify();
     puts("C star identifier tests passed");
     return 0;
 }

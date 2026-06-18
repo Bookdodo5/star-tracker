@@ -1,7 +1,6 @@
 #include "catalog_db.h"
 #include "clock_utils.h"
-#include "compare.h"
-#include "pyramid_db.h"
+#include "identify_tetra.h"
 #include "star_math.h"
 #include "tetra_db.h"
 #include <math.h>
@@ -15,15 +14,6 @@
  */
 static uint64_t tetra_db_bytes(void) {
     return (uint64_t)tetra_kd_node_count * sizeof(TetraKdNode);
-}
-
-/**
- * Returns the in-memory footprint of the Pyramid pair/neighbor database in bytes.
- */
-static uint64_t pyramid_db_bytes(void) {
-    return (uint64_t)pyramid_pair_count * sizeof(PairRow)
-        + (uint64_t)pyramid_neighbor_count * sizeof(PairNeighbor)
-        + (uint64_t)pyramid_neighbor_start_count * sizeof(uint32_t);
 }
 
 /**
@@ -168,7 +158,7 @@ static bool result_is_correct(const MatchResult *match_result, const uint16_t *v
 }
 
 /**
- * Runs a repeatable synthetic batch and prints accuracy/runtime for both algorithms.
+ * Runs a repeatable synthetic batch and prints TETRA accuracy/runtime.
  */
 int main(int argc, char **argv) {
     if (argc != 4 && argc != 5) {
@@ -191,7 +181,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Could not write CSV: %s\n", argv[4]);
             return 2;
         }
-        fprintf(csv_file, "sample_index,valid,observed_stars,expected_hrs,tetra_success,tetra_correct,tetra_time_us,tetra_hrs,pyramid_success,pyramid_correct,pyramid_time_us,pyramid_hrs\n");
+        fprintf(csv_file, "sample_index,valid,observed_stars,expected_hrs,tetra_success,tetra_correct,tetra_time_us,tetra_hrs\n");
     }
 
     /* benchmark_latest.csv always receives one row per test image with per-step timing. */
@@ -199,21 +189,16 @@ int main(int argc, char **argv) {
     if (benchmark_file != NULL) {
         fprintf(benchmark_file,
             "sample_index,observed_stars,"
-            "tetra_correct,tetra_camera_us,tetra_db_us,tetra_verify_us,tetra_total_us,"
-            "pyramid_correct,pyramid_camera_us,pyramid_db_us,pyramid_verify_us,pyramid_total_us\n");
+            "tetra_correct,tetra_camera_us,tetra_db_us,tetra_verify_us,tetra_total_us\n");
     }
 
     int valid_fields = 0;
     int tetra_correct = 0;
-    int pyramid_correct = 0;
     uint64_t tetra_total_us = 0;
-    uint64_t pyramid_total_us = 0;
     /* Synthetic fields build observed vectors directly from the catalog, so there is
        no pixel-to-vector camera step here; camera_us is reported as 0. */
     uint64_t tetra_db_total_us = 0;
     uint64_t tetra_verify_total_us = 0;
-    uint64_t pyramid_db_total_us = 0;
-    uint64_t pyramid_verify_total_us = 0;
     clock_t batch_start = clock();
 
     for (int sample_index = 0; sample_index < requested_samples; ++sample_index) {
@@ -233,32 +218,26 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        CompareResult comparison_result = compare_tetra_pyramid(observed_stars, observed_star_count);
-        tetra_total_us += comparison_result.tetra_us;
-        pyramid_total_us += comparison_result.pyramid_us;
-        tetra_db_total_us += comparison_result.tetra.db_us;
-        tetra_verify_total_us += comparison_result.tetra.verify_us;
-        pyramid_db_total_us += comparison_result.pyramid.db_us;
-        pyramid_verify_total_us += comparison_result.pyramid.verify_us;
-        bool tetra_result_correct = result_is_correct(&comparison_result.tetra, visible_hr_ids, visible_hr_count);
-        bool pyramid_result_correct = result_is_correct(&comparison_result.pyramid, visible_hr_ids, visible_hr_count);
+        MatchResult tetra_result;
+        clock_t tetra_start = clock();
+        identify_tetra(observed_stars, observed_star_count, &tetra_result);
+        uint32_t tetra_us = elapsed_us(tetra_start, clock());
+        tetra_total_us += tetra_us;
+        tetra_db_total_us += tetra_result.db_us;
+        tetra_verify_total_us += tetra_result.verify_us;
+        bool tetra_result_correct = result_is_correct(&tetra_result, visible_hr_ids, visible_hr_count);
         tetra_correct += tetra_result_correct ? 1 : 0;
-        pyramid_correct += pyramid_result_correct ? 1 : 0;
         ++valid_fields;
 
         if (benchmark_file != NULL) {
             fprintf(benchmark_file,
-                "%d,%u,%s,0,%lu,%lu,%lu,%s,0,%lu,%lu,%lu\n",
+                "%d,%u,%s,0,%lu,%lu,%lu\n",
                 sample_index,
                 observed_star_count,
                 tetra_result_correct ? "true" : "false",
-                (unsigned long)comparison_result.tetra.db_us,
-                (unsigned long)comparison_result.tetra.verify_us,
-                (unsigned long)comparison_result.tetra_us,
-                pyramid_result_correct ? "true" : "false",
-                (unsigned long)comparison_result.pyramid.db_us,
-                (unsigned long)comparison_result.pyramid.verify_us,
-                (unsigned long)comparison_result.pyramid_us
+                (unsigned long)tetra_result.db_us,
+                (unsigned long)tetra_result.verify_us,
+                (unsigned long)tetra_us
             );
         }
 
@@ -273,19 +252,11 @@ int main(int argc, char **argv) {
             fprintf(
                 csv_file,
                 "\",%s,%s,%lu,\"",
-                comparison_result.tetra.success ? "true" : "false",
+                tetra_result.success ? "true" : "false",
                 tetra_result_correct ? "true" : "false",
-                (unsigned long)comparison_result.tetra_us
+                (unsigned long)tetra_us
             );
-            write_hr_list(csv_file, comparison_result.tetra.hr_ids, comparison_result.tetra.count);
-            fprintf(
-                csv_file,
-                "\",%s,%s,%lu,\"",
-                comparison_result.pyramid.success ? "true" : "false",
-                pyramid_result_correct ? "true" : "false",
-                (unsigned long)comparison_result.pyramid_us
-            );
-            write_hr_list(csv_file, comparison_result.pyramid.hr_ids, comparison_result.pyramid.count);
+            write_hr_list(csv_file, tetra_result.hr_ids, tetra_result.count);
             fprintf(csv_file, "\"\n");
         }
 
@@ -314,11 +285,6 @@ int main(int argc, char **argv) {
         valid_fields > 0 ? (double)tetra_correct * 100.0 / (double)valid_fields : 0.0,
         valid_fields > 0 ? (unsigned long long)(tetra_total_us / (uint64_t)valid_fields) : 0ull
     );
-    printf(
-        "Pyramid accuracy_pct=%.2f avg_time_us=%llu\n",
-        valid_fields > 0 ? (double)pyramid_correct * 100.0 / (double)valid_fields : 0.0,
-        valid_fields > 0 ? (unsigned long long)(pyramid_total_us / (uint64_t)valid_fields) : 0ull
-    );
     if (csv_file != NULL) {
         fclose(csv_file);
         printf("wrote_csv=%s\n", argv[4]);
@@ -326,22 +292,15 @@ int main(int argc, char **argv) {
 
     /* Human-readable benchmark summary table. */
     double tetra_accuracy = valid_fields > 0 ? (double)tetra_correct * 100.0 / (double)valid_fields : 0.0;
-    double pyramid_accuracy = valid_fields > 0 ? (double)pyramid_correct * 100.0 / (double)valid_fields : 0.0;
     double tetra_mean_ms = valid_fields > 0 ? (double)tetra_total_us / (double)valid_fields / 1000.0 : 0.0;
-    double pyramid_mean_ms = valid_fields > 0 ? (double)pyramid_total_us / (double)valid_fields / 1000.0 : 0.0;
     double tetra_db_mb = (double)tetra_db_bytes() / (1024.0 * 1024.0);
-    double pyramid_db_mb = (double)pyramid_db_bytes() / (1024.0 * 1024.0);
     double tetra_db_mean_ms = valid_fields > 0 ? (double)tetra_db_total_us / (double)valid_fields / 1000.0 : 0.0;
     double tetra_verify_mean_ms = valid_fields > 0 ? (double)tetra_verify_total_us / (double)valid_fields / 1000.0 : 0.0;
-    double pyramid_db_mean_ms = valid_fields > 0 ? (double)pyramid_db_total_us / (double)valid_fields / 1000.0 : 0.0;
-    double pyramid_verify_mean_ms = valid_fields > 0 ? (double)pyramid_verify_total_us / (double)valid_fields / 1000.0 : 0.0;
 
     printf("\n");
     printf("%-10s %9s %9s %9s %9s %9s\n", "Algorithm", "Accuracy%", "Mean_ms", "DB_ms", "Verify_ms", "DB_MB");
     printf("%-10s %9.2f %9.2f %9.2f %9.2f %9.2f\n",
         "TETRA", tetra_accuracy, tetra_mean_ms, tetra_db_mean_ms, tetra_verify_mean_ms, tetra_db_mb);
-    printf("%-10s %9.2f %9.2f %9.2f %9.2f %9.2f\n",
-        "Pyramid", pyramid_accuracy, pyramid_mean_ms, pyramid_db_mean_ms, pyramid_verify_mean_ms, pyramid_db_mb);
 
     if (benchmark_file != NULL) {
         fclose(benchmark_file);

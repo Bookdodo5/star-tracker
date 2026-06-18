@@ -1,0 +1,97 @@
+RALPH PROGRESS LOG — Real-image robustness stress test
+========================================================
+
+TASK
+  Test the existing star identifier on real night-sky images from other sources
+  (>=2 sources), across FOV 8-15 deg (same DB), and under noise + satellite
+  streaking. No identifier/DB changes.
+
+ENVIRONMENT VERIFIED (iteration 1)
+  - centroid_extract.exe present: centroid/build-mingw/centroid_extract.exe
+  - demo_centroid_compare.exe present: identifier/build-generated-release/demo_centroid_compare.exe
+  - astroquery + astropy import OK
+  - SkyView survey_dict enumerated. Candidate distinct sources for star fields:
+      Optical:DSS  -> DSS2 Red (baseline), DSS2 Blue, DSS2 IR
+      IR:2MASS     -> 2MASS-J/H/K   (different telescope/survey, genuinely distinct source)
+      OtherOptical -> Mellinger Red/Green/Blue (all-sky optical mosaic, wide-field look)
+  - Existing harness reference: scripts/batch_real_image_compare.py (DSS only),
+    scripts/fetch_dss_image.py (single DSS fetch).
+
+KEY CODEBASE FACTS
+  - demo_centroid_compare.exe args: <stars.csv> <width> <height> <fov_deg>
+  - centroid_extract.exe args: <image.ppm> <stars.csv>
+  - Camera model convention: north up, east left (see CLAUDE.md). DSS fetch flips
+    FITS rows so row0=north. Any new source must match this or solves fail/mirror.
+  - centroid_extract filters blobs by area in [4,500] px and keeps top-K=20 by
+    brightness -> full-length streaks (area>500) are discarded; partial overlaps
+    with star PSFs are the real failure mode for streaks.
+  - DB built with dual radius (7.5 and 5 deg) -> covers FOV 10 and 15. FOV 8/12
+    are interpolations within that coverage; expect them to work too.
+
+STORY STATUS
+  US-001 (multi-source): PASS
+  US-002 (FOV sweep):    PASS
+  US-003 (noise+streak): PASS
+
+SOURCE NOTE
+  2MASS-J / SDSS dropped: tile-based deep surveys hang in SkyView at >=8 deg FOV
+  (must stitch thousands of small tiles). Replaced with DSS2 Blue (different band)
+  and Mellinger Red (all-sky optical RGB mosaic, wide-field DSLR-class instrument
+  -> closest analogue to real star-tracker imagery). Precisely: DSS2 Red and DSS2
+  Blue are two photographic BANDS of the same Schmidt-plate survey (one instrument
+  family); Mellinger is a separate instrument. So this is 3 image products from 2
+  genuinely distinct instruments -- meeting the ">=2 distinct sources" requirement.
+  All four sweep axes reuse the SAME 4 base sky fields (re-fetched per FOV, or
+  re-augmented for noise/streak), so n=4 distinct fields throughout: the numbers
+  are indicative trends, not precise rates.
+
+RESULTS
+  US-001 Source sweep (4 fields, FOV=10, tol 0.5 deg, seed 42):
+    Fields: (7.85,-48.80) (82.54,63.07) (236.82,14.12) (220.48,-47.39)
+    DSS2 Red       TETRA 4/4 (100%)  Pyramid 2/4 (50%)
+    DSS2 Blue      TETRA 4/4 (100%)  Pyramid 1/4 (25%)
+    Mellinger Red  TETRA 4/4 (100%)  Pyramid 4/4 (100%)
+    All TETRA solves within ~0.03 deg of truth; det=20 (centroid cap) on every image.
+    FINDING: TETRA is fully source-agnostic (works from unit vectors). Pyramid is
+    much stronger on Mellinger (clean wide-field stars) than DSS (deep plates pick
+    up galaxies/blooming that pollute Pyramid's brightest-star seed pairs).
+
+  US-002 FOV sweep (4 fields, DSS2 Red, same DB, FOV vs accuracy):
+    FOV= 8 deg   TETRA 4/4 (100%)  Pyramid 2/4 (50%)
+    FOV=10 deg   TETRA 4/4 (100%)  Pyramid 2/4 (50%)
+    FOV=12 deg   TETRA 3/4 ( 75%)  Pyramid 2/4 (50%)
+    FOV=15 deg   TETRA 2/4 ( 50%)  Pyramid 0/4 ( 0%)
+    No DB rebuild; --fov passed straight to demo_centroid_compare.exe. det=20 on all.
+    FINDING: On REAL images TETRA degrades gracefully 8->15 deg, opposite to the
+    100% synthetic FOV=15 in CLAUDE.md. Synthetic bypasses centroiding+camera model;
+    real 15 deg has coarser angular resolution (0.017 deg/px vs 0.011 at 10 deg) and
+    more faint/non-catalog blobs crowding the top-20. Real-image sweet spot = 8-10 deg.
+    (Small n=4: numbers are indicative, trend is monotonic and clear.)
+
+  US-003a Gaussian noise (4 fields, DSS2 Red, FOV=10, sigma vs accuracy):
+    sigma   0%   TETRA 4/4 (100%)  Pyramid 2/4 (50%)
+    sigma   2%   TETRA 4/4 (100%)  Pyramid 2/4 (50%)
+    sigma   5%   TETRA 4/4 (100%)  Pyramid 2/4 (50%)
+    sigma  10%   TETRA 4/4 (100%)  Pyramid 2/4 (50%)
+    sigma  20%   TETRA 3/4 ( 75%)  Pyramid 2/4 (50%)
+    FINDING: TETRA robust to additive Gaussian noise through 10% of dynamic range;
+    first failure at 20% (1 of 4 fields lost). The DoG bandpass + area/open filter
+    suppress uniform noise well. Pyramid unaffected by noise within its base rate.
+
+  US-003b Satellite streaks (4 fields, DSS2 Red, FOV=10, REALISTIC 3-5px width):
+    0 streaks   TETRA 4/4 (100%)  Pyramid 2/4 (50%)
+    2 streaks   TETRA 4/4 (100%)  Pyramid 2/4 (50%)
+    4 streaks   TETRA 4/4 (100%)  Pyramid 1/4 (25%)
+    8 streaks   TETRA 4/4 (100%)  Pyramid 0/4 ( 0%)
+    FINDING: With realistic trail widths (>=3 px) TETRA is fully robust to streaks,
+    100% even at 8 simultaneous trails; TETRA solve error unchanged (<=0.024 deg).
+    WHY: the centroid extractor's DoG (fine 3x3 minus coarse 11x11) is ~0 along the
+    uniform middle of a thick trail (both blurs equal), so a streak only responds at
+    its tips/edges; and any long streak component has area>500 px and is dropped by
+    the [4,500] filter. So realistic trails rarely occupy the top-K=20 slots.
+    Pyramid still degrades (seed-pair voting fragile: 0/4 at 8 trails).
+    NOTE: an earlier run used 1-3px trails (half-width 0 allowed a 1px line) and
+    showed TETRA failing at 4-8 streaks -- that was a test artifact: 1px ridges
+    survive DoG yet fragment under morphology into spurious slot-stealing blobs.
+    The verifier flagged the unrealistic width; the corrected test reverses the
+    conclusion. Lesson: streak WIDTH dominates the outcome, not count.

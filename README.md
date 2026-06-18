@@ -1,11 +1,12 @@
 # Star Tracker
 
-C implementation of TETRA and Pyramid star-identification algorithms, with a C++ centroid
-extractor and Python tooling for testing, evaluation, and data fetching.
+C implementation of the TETRA star-identification algorithm, with a C++ centroid
+extractor and Python tooling for testing, evaluation, and data fetching. (A Pyramid
+identifier was implemented and then retired — see [Pyramid retirement](#pyramid-retirement).)
 
-**Current results:** TETRA 100%, Pyramid 100% on synthetic data; TETRA 100% on real DSS
-images (13 fields, FOV=10°, 0.5° tolerance); Pyramid ~23% on real images (zero false
-positives). See [`docs/REPORT.md`](docs/REPORT.md) for full analysis.
+**Current results:** TETRA 100% on synthetic data; TETRA 100% on real DSS images
+(13 fields, FOV=10°, 0.5° tolerance); TETRA 97% within 0.5° on 102 KnacksatOrbit frames.
+See [`docs/REPORT.md`](docs/REPORT.md) for the full TETRA-vs-Pyramid analysis (historical).
 
 ---
 
@@ -34,18 +35,16 @@ identifier/                   C star identifier
     src/                      Algorithm implementations
         camera_model.c        Pixel → unit vector (east-left astronomical convention)
         identify_tetra.c      TETRA: 4-star pattern → KD-tree lookup → verify
-        identify_pyramid.c    Pyramid: seed pair + grow → verify
-        verify.c              Shared verifier (catalog-only, algorithm-neutral)
+        verify.c              Verifier (catalog geometry only)
         attitude.c            TRIAD solver for 2–4 correspondences
         star_math.c           Angular distance, Q15 ↔ float, matrix ops
         catalog_db.c          Catalog array + HR lookup + vector decode
-        compare.c / batch_*   Demo and batch drivers
-    include/                  Headers (star_types.h, verify.h, tetra_db.h, pyramid_db.h)
-    generated/                Auto-generated C arrays (catalog, TETRA KD-tree, Pyramid pairs)
+        demo_* / batch_*      Demo and batch drivers
+    include/                  Headers (star_types.h, verify.h, tetra_db.h)
+    generated/                Auto-generated C arrays (catalog, TETRA KD-tree)
     tools/                    Python DB generators
         export_catalog_db.py  Write catalog_db_generated.c from data/catalog.bin
-        export_tetra_db.py    Write tetra_db_generated.c  (~44 MB, takes ~10 min)
-        export_pyramid_db.py  Write pyramid_db_generated.c (~9 MB, takes ~1 min)
+        export_tetra_db.py    Write tetra_db_generated.c  (~26 MB, takes ~10 min)
     CMakeLists.txt
 
 centroid/                     C++ image → centroids extractor
@@ -56,21 +55,22 @@ centroid/                     C++ image → centroids extractor
     CMakeLists.txt
 
 src/
-    star_tracker_core.py      Shared Python library: catalog parsing, DB builders, unit vectors
+    star_tracker_core.py      Host-side Python (never ships): catalog parsing, TETRA DB
+                              builder, Python TETRA golden reference, synthetic eval harness
 
 scripts/                      Python tools
     fetch_dss_image.py        Download a DSS2 Red FITS image and convert to PPM
     render_catalog_test_image.py  Render a synthetic star field from the catalog
     diagnose_dss_centroids.py     Test 4 centroid orientations vs projected catalog truth
     batch_real_image_compare.py   Batch real-image accuracy over many DSS fields
-    parity_harness_tetra.py       C vs Python TETRA divergence diagnostic
-    parity_harness_pyramid.py     C vs Python Pyramid divergence diagnostic
+    eval_orbit_frames.py          Evaluate a folder of orbit frames vs output.txt truth
     smoke_test.py                 Quick regression check
 
 docs/
-    REPORT.md                 TETRA vs Pyramid deep analysis (algorithms, timing, problems, fixes)
+    REPORT.md                 TETRA vs Pyramid deep analysis (Pyramid content is historical)
 
 archive/                      Retired notebooks and one-off scripts (git-ignored)
+    pyramid/                  Retired Pyramid identifier (C, generator, Python ref) — recoverable
 ```
 
 ---
@@ -100,8 +100,7 @@ Regenerate them only if you change the catalog filtering or database parameters:
 
 ```powershell
 python identifier\tools\export_catalog_db.py
-python identifier\tools\export_pyramid_db.py   # ~1 min
-python identifier\tools\export_tetra_db.py     # ~10 min, produces ~44 MB file
+python identifier\tools\export_tetra_db.py     # ~10 min, produces ~26 MB file
 ```
 
 ---
@@ -127,7 +126,7 @@ Or directly:
 .\identifier\build-generated-release\batch_synthetic_compare.exe 100 10 10 outputs\c_batch_fov10.csv
 ```
 
-Prints a summary table (Accuracy%, Mean_ms, DB_ms, Verify_ms, DB_MB) and writes per-image
+Prints a TETRA summary table (Accuracy%, Mean_ms, DB_ms, Verify_ms, DB_MB) and writes per-image
 timing to `outputs/benchmark_latest.csv`.
 
 **Python smoke test:**
@@ -186,13 +185,6 @@ python scripts\diagnose_dss_centroids.py --stars outputs\test_dss_stars.csv --ra
 Should report `mirror_x` orientation with the highest centroid match count and lowest pixel
 error. Any other orientation winning means the camera model has a chirality bug.
 
-**C vs Python parity** (diagnose divergence on the Orion field):
-
-```powershell
-python scripts\parity_harness_tetra.py
-python scripts\parity_harness_pyramid.py
-```
-
 **Controlled catalog-rendered image:**
 
 ```powershell
@@ -216,30 +208,30 @@ and the synthetic renderer both use the same convention.
 If centroids look correct but the attitude is wrong or mirrored, run the orientation
 diagnostic above — a chirality flip in the camera model is the most common culprit.
 
-### Independence rule
+### Pyramid retirement
 
-TETRA and Pyramid never confirm or reject each other. Both receive the same `ObservedStar[]`,
-call the shared `verify_attitude()`, and return independent `MatchResult` values. The
-verifier checks only catalog geometry.
+A Pyramid identifier was implemented as an independent cross-check, then retired: on real
+images it solved only ~23% of fields (abstaining elsewhere, with zero false positives), while
+TETRA solved 100%, so it earned its keep on neither accuracy nor the embedded ROM budget. All
+Pyramid code now lives in `archive/pyramid/` (C source/headers, DB generator + generated array,
+the `compare.c/h` harness, and the Python reference), recoverable via git history. TETRA is the
+sole runtime identifier. `verify_attitude()` checks only catalog geometry and is algorithm-neutral.
 
 ### Database encoding
 
 - Unit vectors: Q15 (int16 in [-32767, 32767] → [-1, 1])
 - TETRA features: uint16 normalized edge ratios (0–65535)
-- Pyramid separations: uint16 on a linear 0–15° scale
 - Residuals: uint16 arcseconds, saturated at 65535
 
 ---
 
 ## Performance
 
-| Metric          | Target  | Synthetic           | Real DSS (Orion) |
-|-----------------|---------|---------------------|------------------|
-| Accuracy        | ≥ 90%   | 100% (both)         | TETRA 100%, Pyramid ~23–40% |
-| TETRA time      | < 333 ms | 0.42 ms/frame      | ~5 ms/frame ✅   |
-| Pyramid time    | < 333 ms | 5.05 ms/frame      | ~91 ms/frame ✅  |
-| TETRA DB size   | < 50 MB | 44.8 MB             | —                |
-| Pyramid DB size | < 10 MB | 9.0 MB              | —                |
+| Metric          | Target   | Synthetic       | Real DSS (Orion) |
+|-----------------|----------|-----------------|------------------|
+| Accuracy        | ≥ 90%    | 100%            | TETRA 100%       |
+| TETRA time      | < 333 ms | 0.2–0.42 ms/frame | ~5 ms/frame ✅ |
+| TETRA DB size   | < 50 MB  | ~9.8 MB in RAM (26 MB source) | — |
 
 The June 2026 catalog KD-tree optimization reduced verify time from ~4 ms to < 0.01 ms
-(~400× speedup), putting both algorithms well within the 3–5 Hz real-image target.
+(~400× speedup), putting TETRA well within the 3–5 Hz real-image target.

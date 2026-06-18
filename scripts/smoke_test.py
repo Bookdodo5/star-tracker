@@ -10,8 +10,6 @@ from src.star_tracker_core import (
     BatchConfig,
     build_tetra_database,
     load_catalog,
-    build_pair_database,
-    PyramidMatcher,
     run_batch,
     summarize_results,
     TetraMatcher,
@@ -21,11 +19,9 @@ from src.star_tracker_core import (
 def main() -> None:
     catalog = load_catalog()
     tetra_db = build_tetra_database(catalog, fov_deg=8.0, max_tetras_per_anchor=20)
-    pyramid_pairs, pyramid_stars = build_pair_database(catalog, "pyramid")
 
     algorithms = {
         "tetra": TetraMatcher(catalog, tetra_db).identify,
-        "pyramid": PyramidMatcher(catalog, pyramid_pairs, pyramid_stars).identify,
     }
 
     for name, identify in algorithms.items():

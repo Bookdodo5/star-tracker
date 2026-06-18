@@ -10,8 +10,6 @@ add_library(star_identifier
     src/attitude.c
     src/camera_model.c
     src/catalog_db.c
-    src/compare.c
-    src/identify_pyramid.c
     src/identify_tetra.c
     src/star_math.c
     src/verify.c
@@ -27,13 +25,10 @@ add_library(star_identifier_generated
     src/attitude.c
     src/camera_model.c
     src/catalog_db.c
-    src/compare.c
-    src/identify_pyramid.c
     src/identify_tetra.c
     src/star_math.c
     src/verify.c
     generated/catalog_db_generated.c
-    generated/pyramid_db_generated.c
     generated/tetra_db_generated.c
 )
 

@@ -1,6 +1,5 @@
 #include "camera_model.h"
 #include "clock_utils.h"
-#include "identify_pyramid.h"
 #include "identify_tetra.h"
 #include <math.h>
 #include <stdio.h>
@@ -167,7 +166,7 @@ static void print_match_result(const char *name, const MatchResult *match_result
 }
 
 /**
- * Runs independent TETRA and Pyramid identification from a Centroid CSV file.
+ * Runs TETRA identification from a Centroid CSV file.
  */
 int main(int argc, char **argv) {
     if (argc != 5) {
@@ -203,7 +202,6 @@ int main(int argc, char **argv) {
     );
 
     MatchResult tetra_result;
-    MatchResult pyramid_result;
 
     printf("Running TETRA...\n");
     fflush(stdout);
@@ -211,13 +209,5 @@ int main(int argc, char **argv) {
     identify_tetra(observed_stars, observed_star_count, &tetra_result);
     clock_t tetra_end = clock();
     print_match_result("TETRA", &tetra_result, elapsed_us(tetra_start, tetra_end));
-    fflush(stdout);
-
-    printf("Running Pyramid...\n");
-    fflush(stdout);
-    clock_t pyramid_start = clock();
-    identify_pyramid(observed_stars, observed_star_count, &pyramid_result);
-    clock_t pyramid_end = clock();
-    print_match_result("Pyramid", &pyramid_result, elapsed_us(pyramid_start, pyramid_end));
     return 0;
 }

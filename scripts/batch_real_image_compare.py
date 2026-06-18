@@ -1,7 +1,7 @@
 """
 Real-image batch benchmark: fetches DSS2 Red images for many sky fields, runs the
-full pipeline (centroid extraction -> TETRA/Pyramid identification), and reports the
-fraction of fields each algorithm solves to within an angular tolerance of truth.
+full pipeline (centroid extraction -> TETRA identification), and reports the
+fraction of fields TETRA solves to within an angular tolerance of truth.
 
 Unlike batch_synthetic_compare (which builds observed vectors directly from the
 catalog), this exercises the real image path end to end, including centroiding and
@@ -40,9 +40,9 @@ CACHE_DIR = ROOT / "cache" / "real_images"
 SCRATCH_DIR = ROOT / "cache" / "real_batch_scratch"
 
 ATTITUDE_RE = re.compile(
-    r"(TETRA|Pyramid) attitude_ra_deg=(-?\d+\.?\d*) attitude_dec_deg=(-?\d+\.?\d*)"
+    r"(TETRA) attitude_ra_deg=(-?\d+\.?\d*) attitude_dec_deg=(-?\d+\.?\d*)"
 )
-SUCCESS_RE = re.compile(r"(TETRA|Pyramid) success=(true|false)")
+SUCCESS_RE = re.compile(r"(TETRA) success=(true|false)")
 
 
 def angular_error_deg(ra_a: float, dec_a: float, ra_b: float, dec_b: float) -> float:
@@ -114,8 +114,7 @@ def run_pipeline(ppm_path: Path, size: int, fov_deg: float):
         detected = int(match.group(1))
 
     result = {"detected": detected,
-              "TETRA": {"success": False, "ra": None, "dec": None},
-              "Pyramid": {"success": False, "ra": None, "dec": None}}
+              "TETRA": {"success": False, "ra": None, "dec": None}}
     for algo, flag in SUCCESS_RE.findall(out):
         result[algo]["success"] = (flag == "true")
     for algo, ra_s, dec_s in ATTITUDE_RE.findall(out):
@@ -143,12 +142,10 @@ def main() -> None:
     print(f"  selected {len(centers)} fields")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    csv_lines = ["index,ra,dec,detected,tetra_success,tetra_err_deg,tetra_correct,"
-                 "pyramid_success,pyramid_err_deg,pyramid_correct"]
+    csv_lines = ["index,ra,dec,detected,tetra_success,tetra_err_deg,tetra_correct"]
 
     valid = 0
     tetra_correct = 0
-    pyramid_correct = 0
     fetch_failures = 0
     start = time.time()
 
@@ -166,32 +163,26 @@ def main() -> None:
             continue
         valid += 1
 
-        row = {}
-        for algo in ("TETRA", "Pyramid"):
-            info = result[algo]
-            correct = False
-            err = float("nan")
-            if info["success"] and info["ra"] is not None:
-                err = angular_error_deg(ra, dec, info["ra"], info["dec"])
-                correct = err <= args.tolerance_deg
-            row[algo] = (info["success"], err, correct)
-        if row["TETRA"][2]:
+        info = result["TETRA"]
+        correct = False
+        err = float("nan")
+        if info["success"] and info["ra"] is not None:
+            err = angular_error_deg(ra, dec, info["ra"], info["dec"])
+            correct = err <= args.tolerance_deg
+        row = (info["success"], err, correct)
+        if row[2]:
             tetra_correct += 1
-        if row["Pyramid"][2]:
-            pyramid_correct += 1
 
         csv_lines.append(
             f"{i},{ra:.4f},{dec:.4f},{result['detected']},"
-            f"{row['TETRA'][0]},{row['TETRA'][1]:.4f},{row['TETRA'][2]},"
-            f"{row['Pyramid'][0]},{row['Pyramid'][1]:.4f},{row['Pyramid'][2]}"
+            f"{row[0]},{row[1]:.4f},{row[2]}"
         )
 
         elapsed = time.time() - start
         done = i + 1
         eta = elapsed / done * (len(centers) - done)
         print(f"  field {done}/{len(centers)} RA={ra:7.2f} DEC={dec:7.2f} detected={result['detected']:2d} "
-              f"| TETRA {'OK ' if row['TETRA'][2] else 'no '}({row['TETRA'][1]:.3f}deg) "
-              f"Pyramid {'OK ' if row['Pyramid'][2] else 'no '}({row['Pyramid'][1]:.3f}deg) "
+              f"| TETRA {'OK ' if row[2] else 'no '}({row[1]:.3f}deg) "
               f"| elapsed {elapsed:.0f}s eta {eta:.0f}s")
 
     args.output.write_text("\n".join(csv_lines) + "\n", encoding="utf-8")
@@ -200,8 +191,6 @@ def main() -> None:
     print(f"  fields requested: {len(centers)}   fetch failures: {fetch_failures}   valid (>=4 centroids): {valid}")
     if valid > 0:
         print(f"  TETRA   accuracy: {tetra_correct}/{valid} = {tetra_correct * 100.0 / valid:.1f}% "
-              f"(within {args.tolerance_deg} deg)")
-        print(f"  Pyramid accuracy: {pyramid_correct}/{valid} = {pyramid_correct * 100.0 / valid:.1f}% "
               f"(within {args.tolerance_deg} deg)")
     print(f"  wrote {args.output}")
 

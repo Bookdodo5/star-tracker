@@ -11,8 +11,11 @@
 // - Morphological open (3x3 separable: two 1-D erosion passes then two 1-D dilation passes)
 // - Connected-component centroiding, top-K by brightness
 
-constexpr int MAX_WIDTH  = 1024;
-constexpr int MAX_HEIGHT = 1024;
+// Sized for the largest frame we feed in (1920x1080 sim renders). The static
+// buffers below are indexed by width*height, so the only hard requirement is
+// width*height <= MAX_PIXELS. ponytail: bump these if a bigger image appears.
+constexpr int MAX_WIDTH  = 1920;
+constexpr int MAX_HEIGHT = 1080;
 constexpr int MAX_PIXELS = MAX_WIDTH * MAX_HEIGHT;
 
 // ── Union-Find (two-pass CCL) ─────────────────────────────────────────────────
@@ -129,6 +132,16 @@ void extract_centroids(const uint8_t* rgb_in, uint8_t* dog_out, uint8_t* morph_o
     static uint8_t  thresh[MAX_PIXELS];
 
     const int pxCount = width * height;
+
+    // Guard the static-buffer ceiling: silently overflowing produced garbage
+    // centroids (10 noise blobs that match no catalog tetrad). Fail loud instead.
+    if (pxCount > MAX_PIXELS) {
+        std::fprintf(stderr,
+            "centroid: image %dx%d (%d px) exceeds MAX_PIXELS=%d; raise MAX_WIDTH/MAX_HEIGHT\n",
+            width, height, pxCount, MAX_PIXELS);
+        *star_count = 0;
+        return;
+    }
 
     // ── Grayscale ──────────────────────────────────────────────────────────────
     for (int i = 0; i < pxCount; ++i) {

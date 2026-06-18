@@ -1,15 +1,16 @@
 """
-Canonical Python Pyramid reference implementation.
-Wraps src/star_tracker_core.py PyramidMatcher.
+Retired Python Pyramid reference implementation.
+Wraps archive/pyramid/pyramid_python_reference.py PyramidMatcher.
 """
 from __future__ import annotations
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from src.star_tracker_core import load_catalog, build_pair_database, PyramidMatcher
+from src.star_tracker_core import load_catalog
+from archive.pyramid.pyramid_python_reference import build_pair_database, PyramidMatcher
 
 
 def build_matcher(max_fov_deg: float = 20.0, mag_limit: float = 6.5) -> tuple:

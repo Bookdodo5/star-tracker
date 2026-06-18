@@ -1,5 +1,5 @@
 """
-Reproducible accuracy test for Python TETRA and Pyramid references.
+Reproducible accuracy test for the Python TETRA reference.
 Fixed seed (numpy 42), 20 synthetic fields. Saves results to outputs/python_reference_baseline.txt.
 """
 from __future__ import annotations
@@ -14,17 +14,14 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 from src.star_tracker_core import (
     load_catalog, build_tetra_database, TetraMatcher,
-    build_pair_database, PyramidMatcher,
     filter_stars_by_fov,
 )
 
 SEED = 42
 N_FIELDS = 20
 TETRA_FOV = 15.0   # matches DB build FOV; 10 deg gives ~44% due to cap=40 truncation
-PYRAMID_FOV = 8.0
 MAG_LIMIT = 6.5
 TETRA_MAX_STARS = 12
-PYRAMID_MAX_STARS = 10
 
 
 def random_ra_dec(rng: np.random.Generator) -> tuple[float, float]:
@@ -54,7 +51,7 @@ def run_batch(algo: str, matcher, catalog, fov: float, max_stars: int, n: int, s
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--algo", choices=["tetra", "pyramid", "both"], default="both")
+    parser.add_argument("--algo", choices=["tetra"], default="tetra")
     parser.add_argument("--n", type=int, default=N_FIELDS)
     parser.add_argument("--seed", type=int, default=SEED)
     args = parser.parse_args()
@@ -80,24 +77,13 @@ def main():
         "",
     ]
 
-    if args.algo in ("tetra", "both"):
-        print(f"Building TETRA database (fov={TETRA_FOV}, mag<={MAG_LIMIT})...")
-        db = build_tetra_database(catalog, fov_deg=15.0, mag_limit=MAG_LIMIT, max_tetras_per_anchor=40)
-        matcher = TetraMatcher(catalog, db)
-        acc, _ = run_batch("tetra", matcher, catalog, TETRA_FOV, TETRA_MAX_STARS, args.n, args.seed)
-        line = f"TETRA accuracy: {acc:.1f}% on {args.n} fields (FOV={TETRA_FOV}°, max_stars={TETRA_MAX_STARS})"
-        print(line)
-        lines.append(line)
-
-    if args.algo in ("pyramid", "both"):
-        print(f"Building Pyramid database (fov<=20°, mag<={MAG_LIMIT})...")
-        pair_db, db_stars = build_pair_database(catalog, algorithm_name="pyramid",
-                                                max_fov_deg=20.0, mag_limit=MAG_LIMIT)
-        matcher = PyramidMatcher(catalog, pair_db, db_stars)
-        acc, _ = run_batch("pyramid", matcher, catalog, PYRAMID_FOV, PYRAMID_MAX_STARS, args.n, args.seed)
-        line = f"Pyramid accuracy: {acc:.1f}% on {args.n} fields (FOV={PYRAMID_FOV}°, max_stars={PYRAMID_MAX_STARS})"
-        print(line)
-        lines.append(line)
+    print(f"Building TETRA database (fov={TETRA_FOV}, mag<={MAG_LIMIT})...")
+    db = build_tetra_database(catalog, fov_deg=15.0, mag_limit=MAG_LIMIT, max_tetras_per_anchor=40)
+    matcher = TetraMatcher(catalog, db)
+    acc, _ = run_batch("tetra", matcher, catalog, TETRA_FOV, TETRA_MAX_STARS, args.n, args.seed)
+    line = f"TETRA accuracy: {acc:.1f}% on {args.n} fields (FOV={TETRA_FOV}°, max_stars={TETRA_MAX_STARS})"
+    print(line)
+    lines.append(line)
 
     baseline_path = outputs / "python_reference_baseline.txt"
     baseline_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
