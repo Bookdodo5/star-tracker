@@ -50,3 +50,4 @@ archive/
 .omc/state/sessions/
 .omc/state/hud-stdin-cache.json
 .claude/
+.understand-anything

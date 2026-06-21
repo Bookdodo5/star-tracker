@@ -118,9 +118,17 @@ static void morph_open_3x3(const uint8_t *in, uint8_t *out, int width, int heigh
 
 extern "C" {
 
+// morph_passes controls how aggressively the threshold mask is cleaned up with the
+// 3x3 morphological open (erode-then-dilate):
+//   0 = skip entirely. Use for camera images whose stars are 1-2 px point sources —
+//       a single open erodes them away (a real night-sky frame went 38 stars -> 3).
+//   1 = one open (default). Tuned for satellite frames where stars are >=3x3 blobs
+//       and single-pixel noise must be rejected.
+//   N = repeat the open N times for noisier sensors.
+// The CCL area floor (area < 4) still rejects single/double-pixel noise even at 0.
 void extract_centroids(const uint8_t* rgb_in, uint8_t* dog_out, uint8_t* morph_out,
                    uint16_t* star_x, uint16_t* star_y, uint64_t* star_brightness, int* star_count,
-                   int width, int height) {
+                   int width, int height, int morph_passes) {
 
     using clk = std::chrono::high_resolution_clock;
     auto t0 = clk::now();
@@ -172,8 +180,17 @@ void extract_centroids(const uint8_t* rgb_in, uint8_t* dog_out, uint8_t* morph_o
     }
     auto t4 = clk::now();
 
-    // ── Morphological open ────────────────────────────────────────────────────
-    morph_open_3x3(thresh, morph_out, width, height);
+    // ── Morphological open (morph_passes times; 0 = pass threshold straight through) ──
+    if (morph_passes <= 0) {
+        memcpy(morph_out, thresh, (size_t)pxCount);
+    } else {
+        morph_open_3x3(thresh, morph_out, width, height);
+        static uint8_t morph_tmp[MAX_PIXELS];
+        for (int pass = 1; pass < morph_passes; ++pass) {
+            memcpy(morph_tmp, morph_out, (size_t)pxCount);
+            morph_open_3x3(morph_tmp, morph_out, width, height);
+        }
+    }
     auto t5 = clk::now();
 
     // ── Connected components ──────────────────────────────────────────────────

@@ -8,7 +8,7 @@
 
 extern "C" void extract_centroids(const uint8_t* rgb_in, uint8_t* dog_out, uint8_t* morph_out,
                                 uint16_t* star_x, uint16_t* star_y, uint64_t* star_brightness, int* star_count,
-                                int width, int height);
+                                int width, int height, int morph_passes);
 
 /**
  * Reads one PPM/PGM header token while skipping whitespace and comments.
@@ -95,9 +95,11 @@ static bool saveStarsCsv(
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) { std::cerr << "Usage: test_run_with_file <input.ppm> [output_stars.csv]\n"; return 1; }
+    if (argc < 2) { std::cerr << "Usage: centroid_extract <input.ppm> [output_stars.csv] [morph_passes]\n"
+                                 "  morph_passes: 1 = satellite default (3x3 open), 0 = camera (skip, keeps tiny stars), N = repeat\n"; return 1; }
     std::string inputImagePath = argv[1];
     std::string outputStarsCsvPath = (argc >= 3) ? argv[2] : "stars.csv";
+    int morphPasses = (argc >= 4) ? std::stoi(argv[3]) : 1;
     int width=0, height=0;
     std::vector<uint8_t> rgb;
     if (!loadPpmOrPgm(inputImagePath, rgb, width, height)) { std::cerr << "Failed to load " << inputImagePath << '\n'; return 1; }
@@ -109,7 +111,7 @@ int main(int argc, char** argv) {
     uint16_t star_y[20];
     uint64_t star_brightness[20];
     int star_count = 0;
-    extract_centroids(rgb.data(), dog.data(), morph.data(), star_x, star_y, star_brightness, &star_count, width, height);
+    extract_centroids(rgb.data(), dog.data(), morph.data(), star_x, star_y, star_brightness, &star_count, width, height, morphPasses);
 
     if (!savePgm("dog.pgm", dog, width, height)) std::cerr << "Failed to write dog.pgm\n";
     if (!savePgm("morph.pgm", morph, width, height)) std::cerr << "Failed to write morph.pgm\n";
