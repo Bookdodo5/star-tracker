@@ -5,6 +5,7 @@
 #include "star_math.h"
 #include "tetra_db.h"
 #include "verify.h"
+#include <math.h>
 #include <string.h>
 
 #define TETRA_MAX_QUERY_STARS 10
@@ -14,6 +15,11 @@
 #define KD_STACK_MAX 96
 #define KD_NODE_VISIT_LIMIT 32768
 #define TETRA_PATTERN_MAX_RESIDUAL_RAD 0.010471976f
+/** FOV self-calibration: focal-correction iterations and convergence/sanity bounds. */
+#define CALIB_MAX_ITERS 6
+#define CALIB_CONVERGE_TOL 0.001f
+#define CALIB_MIN_RATIO 0.05f
+#define CALIB_MAX_RATIO 20.0f
 
 typedef struct {
     uint32_t node_id;
@@ -200,6 +206,7 @@ static bool pattern_residual_is_small(
  */
 bool identify_tetra(const ObservedStar *observed_stars, uint8_t observed_star_count, MatchResult *result) {
     memset(result, 0, sizeof(*result));
+    result->focal_scale = 1.0f;
     clock_t identify_start = clock();
     uint32_t verify_us_accum = 0;
     uint8_t query_star_count = observed_star_count < TETRA_MAX_QUERY_STARS ? observed_star_count : TETRA_MAX_QUERY_STARS;
@@ -266,4 +273,142 @@ tetra_done:
         result->db_us = total_us > verify_us_accum ? total_us - verify_us_accum : 0;
     }
     return result->success;
+}
+
+/**
+ * Rescales one observed unit vector as if the camera focal length changed by `ratio`.
+ *
+ * An observed vector v came from pixel offsets (dx, dy) as (dx/f, dy/f, 1) normalized,
+ * so its tangent-plane offset is (v.x/v.z, v.y/v.z) = (dx/f, dy/f). Changing focal to
+ * f' = f*ratio scales that offset by 1/ratio while the pixel offsets stay fixed. z>0
+ * always (boresight forward), so the division is safe.
+ */
+static ObservedStar rescale_observed(ObservedStar star, float ratio) {
+    float denom = star.z * ratio;
+    Vec3f raw = {star.x / denom, star.y / denom, 1.0f};
+    Vec3f unit = normalize3(raw);
+    return (ObservedStar){unit.x, unit.y, unit.z, star.brightness};
+}
+
+/**
+ * Computes the six sorted pairwise angular distances among four direction vectors.
+ */
+static void sorted_edges_rad(const Vec3f vectors[4], float edges_out[6]) {
+    uint8_t edge_count = 0;
+    for (uint8_t first = 0; first < 4; ++first) {
+        for (uint8_t second = first + 1; second < 4; ++second) {
+            edges_out[edge_count++] = angular_distance_rad(vectors[first], vectors[second]);
+        }
+    }
+    for (uint8_t outer = 0; outer < 6; ++outer) {
+        for (uint8_t inner = outer + 1; inner < 6; ++inner) {
+            if (edges_out[inner] < edges_out[outer]) {
+                float tmp = edges_out[outer];
+                edges_out[outer] = edges_out[inner];
+                edges_out[inner] = tmp;
+            }
+        }
+    }
+}
+
+/**
+ * Estimates f_true / f_seed from a candidate tetrad's observed vs. true catalog angles.
+ *
+ * Sorted edges are permutation-independent, so the focal correction needs no knowledge
+ * of the star-to-HR correspondence. Because pixel->angle is gnomonic (nonlinear over the
+ * field), one correction is not exact from an arbitrary seed, so the ratio is iterated to
+ * convergence. Returns false if any HR has no catalog vector, an edge is degenerate, or
+ * the recovered ratio leaves the sane band.
+ */
+static bool estimate_focal_ratio(
+    const ObservedStar *observed_stars,
+    const uint8_t observed_ids[4],
+    const uint16_t hr_ids[4],
+    float *out_ratio
+) {
+    Vec3f catalog_vectors[4];
+    for (uint8_t index = 0; index < 4; ++index) {
+        if (!catalog_vector(hr_ids[index], &catalog_vectors[index])) {
+            return false;
+        }
+    }
+    float true_edges[6];
+    sorted_edges_rad(catalog_vectors, true_edges);
+    if (true_edges[0] <= 0.0f) {
+        return false;
+    }
+
+    float ratio = 1.0f;
+    for (uint8_t iteration = 0; iteration < CALIB_MAX_ITERS; ++iteration) {
+        Vec3f scaled[4];
+        for (uint8_t index = 0; index < 4; ++index) {
+            ObservedStar rescaled = rescale_observed(observed_stars[observed_ids[index]], ratio);
+            scaled[index] = (Vec3f){rescaled.x, rescaled.y, rescaled.z};
+        }
+        float observed_edges[6];
+        sorted_edges_rad(scaled, observed_edges);
+
+        float ratio_sum = 0.0f;
+        for (uint8_t edge = 0; edge < 6; ++edge) {
+            ratio_sum += observed_edges[edge] / true_edges[edge];
+        }
+        float correction = ratio_sum / 6.0f;
+        ratio *= correction;
+        if (ratio < CALIB_MIN_RATIO || ratio > CALIB_MAX_RATIO || !isfinite(ratio)) {
+            return false;
+        }
+        if (fabsf(correction - 1.0f) < CALIB_CONVERGE_TOL) {
+            break;
+        }
+    }
+    *out_ratio = ratio;
+    return true;
+}
+
+/**
+ * Identifies a field whose seed FOV may be far from the true FOV (see header).
+ */
+bool identify_tetra_calibrate(const ObservedStar *observed_stars, uint8_t observed_star_count, MatchResult *result) {
+    memset(result, 0, sizeof(*result));
+    result->focal_scale = 1.0f;
+    uint8_t query_star_count = observed_star_count < TETRA_MAX_QUERY_STARS ? observed_star_count : TETRA_MAX_QUERY_STARS;
+    if (query_star_count < 4 || observed_star_count > MAX_OBS_STARS) {
+        return false;
+    }
+
+    /* ponytail: O(C(query,4) * candidates) full re-identifies; bootstrap runs once, early-exits
+       on the first solve, and the brightest real tetrad usually calibrates immediately. */
+    for (uint8_t first = 0; first < query_star_count - 3; ++first) {
+        for (uint8_t second = first + 1; second < query_star_count - 2; ++second) {
+            for (uint8_t third = second + 1; third < query_star_count - 1; ++third) {
+                for (uint8_t fourth = third + 1; fourth < query_star_count; ++fourth) {
+                    uint8_t observed_ids[4] = {first, second, third, fourth};
+                    uint16_t feature[5];
+                    if (!make_tetra_feature(observed_stars, observed_ids, feature)) {
+                        continue;
+                    }
+                    TetraCandidate candidates[TETRA_TOP_CANDIDATES];
+                    uint8_t candidate_count = tetra_kd_search_topk(feature, candidates);
+                    for (uint8_t candidate_index = 0; candidate_index < candidate_count; ++candidate_index) {
+                        const TetraKdNode *node = &tetra_kd_nodes[candidates[candidate_index].node_id];
+                        float ratio;
+                        if (!estimate_focal_ratio(observed_stars, observed_ids, node->hr, &ratio)) {
+                            continue;
+                        }
+                        ObservedStar rescaled[MAX_OBS_STARS];
+                        for (uint8_t star_index = 0; star_index < observed_star_count; ++star_index) {
+                            rescaled[star_index] = rescale_observed(observed_stars[star_index], ratio);
+                        }
+                        MatchResult attempt;
+                        if (identify_tetra(rescaled, observed_star_count, &attempt) && attempt.success) {
+                            *result = attempt;
+                            result->focal_scale = ratio;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false;
 }

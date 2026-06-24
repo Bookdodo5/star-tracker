@@ -56,6 +56,10 @@ typedef struct {
     uint16_t max_residual_arcsec;
     int32_t score;
     bool success;
+    /* Recovered focal-length multiplier (f_true / f_seed) from FOV self-calibration.
+       1.0 means no calibration was applied (identify_tetra); identify_tetra_calibrate
+       sets it so the caller can recover the true FOV from the seed FOV. */
+    float focal_scale;
     /* Per-step timing populated by the identifier (microseconds, clock() resolution).
        db_us covers candidate generation + database search; verify_us covers the
        cumulative time spent in verify_attitude. Camera conversion is timed by the

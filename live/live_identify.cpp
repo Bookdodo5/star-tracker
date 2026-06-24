@@ -101,3 +101,46 @@ int identify_frame(const uint8_t *rgb, int width, int height, float fov_deg,
     if (!attitude_to_radecroll(result.catalog_to_observed, out_ra, out_dec, out_roll)) return 0;
     return 1;
 }
+
+/**
+ * Like identify_frame, but seed_fov_deg may be far from the true FOV. On a solve, the
+ * recovered horizontal FOV is written to *out_fov_deg so the caller can lock it and use
+ * identify_frame (cheap) on every later frame. Returns 1 on solve, 0 if none, -2 if the
+ * frame is too large. Bootstrap-only: more expensive than identify_frame.
+ */
+extern "C" __declspec(dllexport)
+int identify_frame_calibrate(const uint8_t *rgb, int width, int height, float seed_fov_deg,
+                             double *out_ra, double *out_dec, double *out_roll,
+                             double *out_fov_deg, int morph_passes) {
+    if (width <= 0 || height <= 0 || width * height > LIVE_MAX_PIXELS) return -2;
+
+    static std::vector<uint8_t> dog, morph;
+    dog.assign((size_t)width * height, 0);
+    morph.assign((size_t)width * height, 0);
+
+    uint16_t star_x[20], star_y[20];
+    uint64_t star_brightness[20];
+    int star_count = 0;
+    extract_centroids(rgb, dog.data(), morph.data(), star_x, star_y, star_brightness,
+                      &star_count, width, height, morph_passes);
+    if (star_count <= 0) return 0;
+
+    DetectedStar detected[20];
+    int n = star_count < 20 ? star_count : 20;
+    for (int i = 0; i < n; ++i) {
+        detected[i] = (DetectedStar){star_x[i], star_y[i], (uint32_t)star_brightness[i]};
+    }
+
+    CameraModel camera = camera_from_fov(width, height, seed_fov_deg);
+    ObservedStar observed[MAX_OBS_STARS];
+    uint8_t observed_count = convert_detected_stars(detected, (uint8_t)n, &camera, observed, MAX_OBS_STARS);
+
+    MatchResult result;
+    if (!identify_tetra_calibrate(observed, observed_count, &result) || !result.success) return 0;
+    if (!attitude_to_radecroll(result.catalog_to_observed, out_ra, out_dec, out_roll)) return 0;
+
+    /* Recover the true FOV from the focal scale: f_true = f_seed * focal_scale. */
+    float recovered_focal = camera.fx * result.focal_scale;
+    *out_fov_deg = 2.0 * atan(((double)width * 0.5) / (double)recovered_focal) * (double)RAD_TO_DEG;
+    return 1;
+}
