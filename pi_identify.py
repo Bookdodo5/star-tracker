@@ -26,9 +26,6 @@ ROOT = os.path.expanduser("~/src/star-tracker")
 CENTROID_BIN = os.path.join(ROOT, "centroid", "build-pi", "centroid_extract")
 IDENTIFY_BIN = os.path.join(ROOT, "identifier", "build-pi", "demo_centroid_compare")
 
-# FOV sweep: try this many evenly-spaced values from seed×LO to seed×HI
-_FOV_STEPS = 20
-_FOV_LO, _FOV_HI = 0.5, 2.0
 
 
 def _check_bins():
@@ -86,10 +83,27 @@ def _parse_attitude(stdout: str):
     return None
 
 
-def _run_identify(csv_path: str, width: int, height: int, fov: float):
-    r = subprocess.run([IDENTIFY_BIN, csv_path, str(width), str(height), str(fov)],
-                       capture_output=True, text=True)
-    return _parse_attitude(r.stdout)
+def _parse_calibrated_fov(stdout: str):
+    for line in stdout.splitlines():
+        if "calibrated_fov_deg=" in line:
+            try:
+                kv = dict(tok.split("=") for tok in line.split() if "=" in tok)
+                return float(kv["calibrated_fov_deg"])
+            except (KeyError, ValueError):
+                pass
+    return None
+
+
+def _run_identify(csv_path: str, width: int, height: int, fov: float, calibrate: bool = False):
+    cmd = [IDENTIFY_BIN]
+    if calibrate:
+        cmd.append("--calibrate")
+    cmd += [csv_path, str(width), str(height), str(fov)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    att = _parse_attitude(r.stdout)
+    if calibrate:
+        return att, _parse_calibrated_fov(r.stdout)
+    return att
 
 
 def _centroid(ppm_bytes: bytes, morph: int, tmp: str):
@@ -114,20 +128,15 @@ def identify_frame(ppm_bytes: bytes, width: int, height: int, fov: float, morph:
         return _run_identify(csv, width, height, fov)
 
 
-def identify_frame_fov_search(ppm_bytes: bytes, width: int, height: int,
-                               seed_fov: float, morph: int):
-    """Sweep FOVs seed×LO…seed×HI; return ((ra,dec,roll), locked_fov) or (None, None)."""
-    fovs = [seed_fov * (_FOV_LO + (_FOV_HI - _FOV_LO) * i / (_FOV_STEPS - 1))
-            for i in range(_FOV_STEPS)]
+def identify_frame_calibrate(ppm_bytes: bytes, width: int, height: int,
+                              seed_fov: float, morph: int):
+    """Single solve with FOV self-calibration. Returns ((ra,dec,roll), true_fov) or (None, None)."""
     with tempfile.TemporaryDirectory() as tmp:
         csv = _centroid(ppm_bytes, morph, tmp)
         if csv is None:
             return None, None
-        for fov in fovs:
-            att = _run_identify(csv, width, height, fov)
-            if att:
-                return att, fov
-    return None, None
+        att, fov = _run_identify(csv, width, height, seed_fov, calibrate=True)
+        return att, fov
 
 
 def main():
@@ -180,14 +189,13 @@ def main():
             fps = frame_i / max(time.monotonic() - t0, 1e-6)
 
             if not fov_locked:
-                att, found_fov = identify_frame_fov_search(ppm, w, h, fov, args.morph)
+                att, found_fov = identify_frame_calibrate(ppm, w, h, fov, args.morph)
                 if att:
                     fov = found_fov
                     fov_locked = True
                     print(f"[fov-search] locked FOV = {fov:.3f}°")
                 else:
-                    print(f"frame {frame_i:4d} | NULL (searching FOV {args.fov * _FOV_LO:.1f}–"
-                          f"{args.fov * _FOV_HI:.1f}°)   ({fps:.2f} fps)")
+                    print(f"frame {frame_i:4d} | NULL (fov-search seed={args.fov}°)   ({fps:.2f} fps)")
                     continue
 
             else:

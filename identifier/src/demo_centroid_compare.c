@@ -169,8 +169,17 @@ static void print_match_result(const char *name, const MatchResult *match_result
  * Runs TETRA identification from a Centroid CSV file.
  */
 int main(int argc, char **argv) {
+    /* Optional --calibrate flag: use identify_tetra_calibrate and output recovered FOV. */
+    int calibrate = 0;
+    if (argc > 1 && strcmp(argv[1], "--calibrate") == 0) {
+        calibrate = 1;
+        argv++; argc--;
+    }
+
     if (argc != 5) {
-        fprintf(stderr, "Usage: demo_centroid_compare <stars.csv> <image_width> <image_height> <horizontal_fov_deg>\n");
+        fprintf(stderr,
+            "Usage: demo_centroid_compare [--calibrate] <stars.csv> <image_width> <image_height> <horizontal_fov_deg>\n"
+            "  --calibrate  use FOV self-calibration (identify_tetra_calibrate); outputs calibrated_fov_deg\n");
         return 2;
     }
 
@@ -203,11 +212,23 @@ int main(int argc, char **argv) {
 
     MatchResult tetra_result;
 
-    printf("Running TETRA...\n");
+    printf("Running TETRA%s...\n", calibrate ? " (calibrate)" : "");
     fflush(stdout);
     clock_t tetra_start = clock();
-    identify_tetra(observed_stars, observed_star_count, &tetra_result);
+    if (calibrate) {
+        identify_tetra_calibrate(observed_stars, observed_star_count, &tetra_result);
+    } else {
+        identify_tetra(observed_stars, observed_star_count, &tetra_result);
+    }
     clock_t tetra_end = clock();
     print_match_result("TETRA", &tetra_result, elapsed_us(tetra_start, tetra_end));
+
+    if (calibrate && tetra_result.success) {
+        float recovered_focal = camera_model.fx * tetra_result.focal_scale;
+        float recovered_fov = 2.0f * atanf(((float)image_width * 0.5f) / recovered_focal)
+                              * (180.0f / 3.14159265358979323846f);
+        printf("TETRA calibrated_fov_deg=%.6f focal_scale=%.6f\n",
+               recovered_fov, tetra_result.focal_scale);
+    }
     return 0;
 }
