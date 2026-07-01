@@ -5,11 +5,14 @@ Pi live star identification: Sentech GigE camera → centroid_extract → TETRA 
 Subprocess approach — no C changes: stapipy grabs frames, this script writes PPM to
 a tmpdir, shells out to centroid_extract then demo_centroid_compare, and parses stdout.
 
+Also serves a live MJPEG preview on http://<pi-ip>:8080 (--stream, enabled by default).
+
 Usage:
-    python pi_identify.py --fov 10
+    python pi_identify.py --fov 7.569
     python pi_identify.py --fov 10 --morph 0          # real night-sky point-source stars
     python pi_identify.py --fov 10 --scale 0.5        # downscale 2× before centroiding
-    python pi_identify.py --fov 10 --fov-search       # sweep FOV ×0.5–×2 and lock on first solve
+    python pi_identify.py --fov 10 --fov-search       # calibrate FOV from seed, lock on first solve
+    python pi_identify.py --fov 10 --no-stream        # disable MJPEG server
     python pi_identify.py --fov 10 --frames 1         # single shot
 """
 import argparse
@@ -17,8 +20,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import cv2
 import numpy as np
 import stapipy as st
 
@@ -26,6 +32,10 @@ ROOT = os.path.expanduser("~/src/star-tracker")
 CENTROID_BIN = os.path.join(ROOT, "centroid", "build-pi", "centroid_extract")
 IDENTIFY_BIN = os.path.join(ROOT, "identifier", "build-pi", "demo_centroid_compare")
 
+# Shared state for the MJPEG server
+_latest_jpeg = [b""]
+_latest_att = [None]
+_jpeg_lock = threading.Lock()
 
 
 def _check_bins():
@@ -36,38 +46,63 @@ def _check_bins():
 
 
 def _resize_gray(gray: np.ndarray, scale: float) -> np.ndarray:
-    try:
-        import cv2
-        return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    except ImportError:
-        from PIL import Image
-        h, w = gray.shape
-        img = Image.fromarray(gray).resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        return np.array(img)
+    return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
 
-def _to_ppm(data: bytes, pfi, width: int, height: int, scale: float):
-    """Convert raw Sentech buffer → P6 PPM bytes + (out_width, out_height)."""
+def _to_gray(data: bytes, pfi, width: int, height: int) -> np.ndarray:
     if pfi.each_component_total_bit_count > 8:
         arr = np.frombuffer(data, np.uint16)
         arr = (arr >> (pfi.each_component_valid_bit_count - 8)).astype(np.uint8)
     else:
         arr = np.frombuffer(data, np.uint8)
-
     if pfi.is_mono:
-        gray = arr.reshape(height, width)
-    else:
-        arr = arr.reshape(height, width)
-        q = ((arr[0::2, 0::2].astype(np.uint16) + arr[0::2, 1::2]
-              + arr[1::2, 0::2] + arr[1::2, 1::2]) // 4).astype(np.uint8)
-        gray = q.repeat(2, axis=0).repeat(2, axis=1)[:height, :width]
+        return arr.reshape(height, width)
+    arr = arr.reshape(height, width)
+    q = ((arr[0::2, 0::2].astype(np.uint16) + arr[0::2, 1::2]
+          + arr[1::2, 0::2] + arr[1::2, 1::2]) // 4).astype(np.uint8)
+    return q.repeat(2, axis=0).repeat(2, axis=1)[:height, :width]
 
-    if scale != 1.0:
-        gray = _resize_gray(gray, scale)
 
+def _gray_to_ppm(gray: np.ndarray) -> tuple:
     h, w = gray.shape
     rgb = np.stack([gray, gray, gray], axis=-1)
     return f"P6\n{w} {h}\n255\n".encode() + rgb.tobytes(), w, h
+
+
+def _update_jpeg(gray: np.ndarray, att):
+    """Encode frame + attitude overlay as JPEG for the MJPEG stream."""
+    small = cv2.resize(gray, (812, 618))
+    bgr = cv2.cvtColor(small, cv2.COLOR_GRAY2BGR)
+    if att:
+        label = f"RA={att[0]:.3f}  DEC={att[1]:.3f}  ROLL={att[2]:.2f}"
+        cv2.putText(bgr, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    else:
+        cv2.putText(bgr, "NULL", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+    _, jpg = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    with _jpeg_lock:
+        _latest_jpeg[0] = jpg.tobytes()
+
+
+class _MJPEGHandler(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.end_headers()
+        try:
+            while True:
+                with _jpeg_lock:
+                    data = _latest_jpeg[0]
+                self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + data + b"\r\n")
+                time.sleep(0.05)
+        except Exception:
+            pass
+
+
+def _start_mjpeg_server(port: int):
+    server = HTTPServer(("0.0.0.0", port), _MJPEGHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f"[stream] http://10.90.37.15:{port}")
 
 
 def _parse_attitude(stdout: str):
@@ -107,7 +142,6 @@ def _run_identify(csv_path: str, width: int, height: int, fov: float, calibrate:
 
 
 def _centroid(ppm_bytes: bytes, morph: int, tmp: str):
-    """Write PPM and run centroid_extract. Returns csv_path or None on error."""
     ppm = os.path.join(tmp, "frame.ppm")
     csv = os.path.join(tmp, "stars.csv")
     with open(ppm, "wb") as f:
@@ -120,7 +154,6 @@ def _centroid(ppm_bytes: bytes, morph: int, tmp: str):
 
 
 def identify_frame(ppm_bytes: bytes, width: int, height: int, fov: float, morph: int):
-    """Single-FOV identification. Returns (ra, dec, roll) or None."""
     with tempfile.TemporaryDirectory() as tmp:
         csv = _centroid(ppm_bytes, morph, tmp)
         if csv is None:
@@ -130,13 +163,11 @@ def identify_frame(ppm_bytes: bytes, width: int, height: int, fov: float, morph:
 
 def identify_frame_calibrate(ppm_bytes: bytes, width: int, height: int,
                               seed_fov: float, morph: int):
-    """Single solve with FOV self-calibration. Returns ((ra,dec,roll), true_fov) or (None, None)."""
     with tempfile.TemporaryDirectory() as tmp:
         csv = _centroid(ppm_bytes, morph, tmp)
         if csv is None:
             return None, None
-        att, fov = _run_identify(csv, width, height, seed_fov, calibrate=True)
-        return att, fov
+        return _run_identify(csv, width, height, seed_fov, calibrate=True)
 
 
 def main():
@@ -144,16 +175,25 @@ def main():
     parser.add_argument("--fov", type=float, default=10.0,
                         help="horizontal FOV in degrees (seed if --fov-search)")
     parser.add_argument("--fov-search", action="store_true",
-                        help="sweep FOV ×0.5–×2.0 around seed, lock on first solve")
+                        help="calibrate FOV from seed, lock on first solve")
     parser.add_argument("--morph", type=int, default=0,
                         help="centroid morph passes: 0=real stars (default), 1+=satellite blobs")
     parser.add_argument("--scale", type=float, default=1.0,
                         help="downscale frame before centroiding (e.g. 0.5 = half resolution)")
     parser.add_argument("--frames", type=int, default=0,
                         help="frames to process (0 = infinite, Ctrl+C to stop)")
+    parser.add_argument("--stream", action="store_true", default=True,
+                        help="serve MJPEG preview on port 8080 (default: on)")
+    parser.add_argument("--no-stream", dest="stream", action="store_false",
+                        help="disable MJPEG preview server")
+    parser.add_argument("--port", type=int, default=8080,
+                        help="MJPEG server port (default: 8080)")
     args = parser.parse_args()
 
     _check_bins()
+
+    if args.stream:
+        _start_mjpeg_server(args.port)
 
     st.initialize()
     st_system = st.create_system()
@@ -183,8 +223,13 @@ def main():
                 if not (pfi.is_mono or pfi.is_bayer):
                     print("[warn] unsupported pixel format, skipping")
                     continue
-                ppm, w, h = _to_ppm(st_image.get_image_data(), pfi, w, h, args.scale)
+                gray = _to_gray(st_image.get_image_data(), pfi, w, h)
 
+            if args.scale != 1.0:
+                gray = _resize_gray(gray, args.scale)
+                h, w = gray.shape
+
+            ppm, w, h = _gray_to_ppm(gray)
             frame_i += 1
             fps = frame_i / max(time.monotonic() - t0, 1e-6)
 
@@ -196,10 +241,14 @@ def main():
                     print(f"[fov-search] locked FOV = {fov:.3f}°")
                 else:
                     print(f"frame {frame_i:4d} | NULL (fov-search seed={args.fov}°)   ({fps:.2f} fps)")
+                    if args.stream:
+                        _update_jpeg(gray, None)
                     continue
-
             else:
                 att = identify_frame(ppm, w, h, fov, args.morph)
+
+            if args.stream:
+                _update_jpeg(gray, att)
 
             if att:
                 print(f"frame {frame_i:4d} | RA={att[0]:9.4f}  DEC={att[1]:8.4f}  "
