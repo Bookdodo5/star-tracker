@@ -20,7 +20,7 @@ import time
 import numpy as np
 import stapipy as st
 
-ROOT = os.path.expanduser("~/star-tracker")
+ROOT = os.path.expanduser("~/src/star-tracker")
 CENTROID_BIN = os.path.join(ROOT, "centroid", "build-pi", "centroid_extract")
 IDENTIFY_BIN = os.path.join(ROOT, "identifier", "build-pi", "demo_centroid_compare")
 
