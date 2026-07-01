@@ -46,6 +46,11 @@ Key flags: `--fov` (seed guess), `--fov-search` (recover the true FOV and lock i
 first solve), `--morph` (0 keeps faint stars, 1 default), `--scale`, `--show`, `--save out.avi`,
 `--monitor N` / `--region x,y,w,h` (screen source), `--cam-width/--cam-height`, `--list-monitors`.
 
+**Non-square sensors (e.g. 7°×4°):** `--fov` is the **horizontal** FOV. Pixels are assumed
+square (`fx=fy`), so the vertical FOV follows from the image height — pass `--fov 7` for a 7×4
+camera and feed its native un-cropped resolution (`width/height ≈ 1.75` for 7×4). Add
+`--fov-search` to recover the exact horizontal FOV from the first solve.
+
 ---
 
 ## Repository Layout

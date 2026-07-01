@@ -8,7 +8,7 @@
 #include <math.h>
 #include <string.h>
 
-#define TETRA_MAX_QUERY_STARS 10
+#define TETRA_MAX_QUERY_STARS 16
 #define TETRA_TOP_CANDIDATES 8
 /** Exit once a match this good is found; avoids exhausting all 210 4-tuples. */
 #define TETRA_EARLY_EXIT_SCORE 70000

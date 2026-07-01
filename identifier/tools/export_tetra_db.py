@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -24,12 +25,27 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 GENERATED_TETRA_SOURCE = ROOT / "identifier" / "generated" / "tetra_db_generated.c"
-FOV_DEG = 10.0
-MAX_SEP_RAD = math.radians(FOV_DEG)       # max pairwise edge in a valid tetrad
-# Single pass at 5° radius covers all tetrads observable in a 10° FOV.
-FIELD_RADII_RAD = [math.radians(5.0)]
-MAG_LIMIT_Q100 = 650                      # faintest star allowed as a field member
-MAX_FIELD_STARS = 8                       # top-N brightest per field
+
+# Anchored all-combinations generation (each tetra is owned by its BRIGHTEST star = anchor):
+#   - anchors: stars brighter than BMC (so even sparse fields, whose brightest is faint, get one).
+#   - members: stars brighter than L (matches the 7.5 validity reference).
+#   - gather radius R ~= FOV HALF-DIAGONAL so the companion pool is in-frame (avoids the
+#     out-of-frame "annulus" that makes brightest-K select the wrong stars); every star is an
+#     anchor, so edge-anchor fields are covered via a more central anchor's compact subset.
+#   - max tetra edge <= FOV DIAGONAL so the 4 stars fit one frame.
+# Swept knobs are env-overridable so the size sweep rebuilds without editing source.
+FOV_W = float(os.environ.get("STAR_DB_FOV_W", "7.0"))
+FOV_H = float(os.environ.get("STAR_DB_FOV_H", "4.0"))
+FOV_DIAG_DEG = math.hypot(FOV_W, FOV_H)
+MAG_LIMIT = float(os.environ.get("STAR_DB_MAG", "7.5"))         # L: faintest tetra member
+BMC = float(os.environ.get("STAR_DB_BMC", "7.0"))              # faintest anchor (brightest star)
+MAX_FIELD_STARS = int(os.environ.get("STAR_DB_FIELDSTARS", "9"))   # K_high: dimmer neighbours (sparse anchors)
+GATHER_RAD = math.radians(float(os.environ.get("STAR_DB_RADIUS", "3.5")))  # ~half-diagonal (7x4 winner)
+# Adaptive-K: anchors with >DENSITY_THRESH dimmer neighbours in gather radius use K_LOW instead of K_HIGH.
+# Dense sky regions are covered by many overlapping anchors; sparser combos per anchor still maintain >=99%.
+DENSITY_THRESH = int(os.environ.get("STAR_DB_DENSITY_THRESH", "15"))   # neighbour count threshold
+K_LOW = int(os.environ.get("STAR_DB_K_LOW", "6"))                       # K for dense anchors
+MAX_SEP_RAD = math.radians(FOV_DIAG_DEG)   # max pairwise edge: 4 stars must fit one frame
 
 
 def _ang(ax: float, ay: float, az: float, bx: float, by: float, bz: float) -> float:
@@ -70,86 +86,30 @@ def _build_kd(tetra_rows: list[dict], kd_nodes: list[dict]) -> int:
     return node_index
 
 
-def _build_tetrads(
-    bright_vecs: list[tuple[float, float, float]],
-    bright_hrs: list[int],
-    all_vecs: list[tuple[float, float, float]],
-    field_radius_rad: float,
-    seen: set[frozenset[int]],
-    rows: list[dict],
-) -> None:
-    """
-    Iterates all_vecs as field centres with the given field_radius_rad.
-    Appends newly seen 4-combinations into rows, deduplicating via seen.
-    Called once per supported FOV radius so both get coverage.
-    """
-    n_bright = len(bright_vecs)
-    n_all = len(all_vecs)
-    cos_field = math.cos(field_radius_rad)
-    t0 = time.time()
-
-    for centre_idx in range(n_all):
-        cx, cy, cz = all_vecs[centre_idx]
-
-        field: list[int] = []
-        for i in range(n_bright):
-            if len(field) == MAX_FIELD_STARS:
-                break
-            x, y, z = bright_vecs[i]
-            if cx * x + cy * y + cz * z >= cos_field:
-                field.append(i)
-
-        if len(field) < 4:
-            continue
-
-        for combo in itertools.combinations(field, 4):
-            key = frozenset(combo)
-            if key in seen:
-                continue
-            feature = _sorted_edge_feature([bright_vecs[i] for i in combo])
-            if feature is None:
-                continue
-            seen.add(key)
-            rows.append({"hr_ids": [bright_hrs[i] for i in combo], "feature": feature})
-
-        elapsed = time.time() - t0
-        if (centre_idx + 1) % 1000 == 0 or centre_idx == n_all - 1:
-            frac = (centre_idx + 1) / n_all
-            eta = elapsed / frac * (1.0 - frac) if frac > 0 else 0.0
-            print(f"    {centre_idx + 1}/{n_all} centres | {len(rows)} tetrads"
-                  f" | elapsed {elapsed:.1f}s | eta {eta:.1f}s")
-
-
 def main() -> None:
-    from src.star_tracker_core import load_catalog, unit_vectors
+    from src.star_tracker_core import load_db_catalog, unit_vectors, anchored_allcombos_tetrads
 
-    print("Loading catalog...")
-    df_all = load_catalog()
-    df_all = df_all.sort_values("Vmag").reset_index(drop=True)
+    print(f"Loading Tycho-2 catalog (members V <= {MAG_LIMIT})...")
+    df_all = load_db_catalog(MAG_LIMIT)  # sorted brightest-first; index = brightness rank
 
-    # Bright stars used as field members (mag <= 6.5)
-    df_bright = df_all[df_all["Vmag"] <= MAG_LIMIT_Q100 / 100.0].reset_index(drop=True)
-    bright_vecs_np = unit_vectors(df_bright["RA_deg"], df_bright["DEC_deg"])
-    bright_hrs = df_bright["HR_clean"].astype(int).tolist()
-    bright_vecs = [(float(bright_vecs_np[i, 0]), float(bright_vecs_np[i, 1]), float(bright_vecs_np[i, 2]))
-                   for i in range(len(df_bright))]
-    print(f"  {len(bright_vecs)} bright stars (mag <= {MAG_LIMIT_Q100 / 100:.1f})")
+    member_vecs_np = unit_vectors(df_all["RA_deg"], df_all["DEC_deg"])
+    member_hrs = df_all["HR_clean"].astype(int).tolist()
+    member_vecs = [(float(member_vecs_np[i, 0]), float(member_vecs_np[i, 1]), float(member_vecs_np[i, 2]))
+                   for i in range(len(df_all))]
+    n_anchors = int((df_all["Vmag"] <= BMC).sum())  # anchors = prefix brighter than BMC
+    print(f"  {len(member_vecs)} members (V<={MAG_LIMIT}); {n_anchors} anchors (V<={BMC}); "
+          f"R_gather={math.degrees(GATHER_RAD):.2f}° max_edge={FOV_DIAG_DEG:.2f}° K={MAX_FIELD_STARS}")
 
-    # All catalog stars used as field centres (including dim ones, matching batch harness)
-    all_vecs_np = unit_vectors(df_all["RA_deg"], df_all["DEC_deg"])
-    all_vecs = [(float(all_vecs_np[i, 0]), float(all_vecs_np[i, 1]), float(all_vecs_np[i, 2]))
-                for i in range(len(df_all))]
-    print(f"  {len(all_vecs)} total catalog stars (field centres)")
-
-    radii_deg = [math.degrees(r) for r in FIELD_RADII_RAD]
-    print(f"Building field-coverage TETRA DB (fov={FOV_DEG}°,"
-          f" field_radii={radii_deg}°, max_field_stars={MAX_FIELD_STARS})...")
-    seen: set[frozenset[int]] = set()
+    print(f"Generating anchored all-combos tetrads (adaptive: thresh>{DENSITY_THRESH} → K={K_LOW})...")
+    combos = anchored_allcombos_tetrads(member_vecs_np, n_anchors, GATHER_RAD, MAX_SEP_RAD, MAX_FIELD_STARS,
+                                         density_thresh=DENSITY_THRESH, k_low=K_LOW)
     tetra_rows: list[dict] = []
-    for radius_rad in FIELD_RADII_RAD:
-        print(f"  Pass field_radius={math.degrees(radius_rad):.1f}°...")
-        _build_tetrads(bright_vecs, bright_hrs, all_vecs, radius_rad, seen, tetra_rows)
-    print(f"  Unique tetrads after all passes: {len(tetra_rows)}")
+    for combo in combos:
+        feature = _sorted_edge_feature([member_vecs[i] for i in combo])
+        if feature is None:
+            continue
+        tetra_rows.append({"hr_ids": [member_hrs[i] for i in combo], "feature": feature})
+    print(f"  Tetrads: {len(tetra_rows)}")
 
     print("Building KD-tree...")
     kd_nodes: list[dict] = []
@@ -160,10 +120,10 @@ def main() -> None:
     print(f"Writing {GENERATED_TETRA_SOURCE} ...")
     with GENERATED_TETRA_SOURCE.open("w", newline="\n") as f:
         f.write("/**\n")
-        f.write(" * Generated TETRA array KD-tree database.\n")
-        f.write(f" * Field-coverage: top-{MAX_FIELD_STARS} stars per centre,\n")
-        f.write(f" * field_radii={radii_deg}deg,"
-                f" max_edge={FOV_DEG}deg, mag<={MAG_LIMIT_Q100 / 100:.1f}.\n")
+        f.write(" * Generated TETRA array KD-tree database (anchored generation).\n")
+        f.write(f" * anchors V<={BMC}, members V<={MAG_LIMIT}, K={MAX_FIELD_STARS},\n")
+        f.write(f" * gather_radius={FOV_DIAG_DEG:.2f}deg, max_edge={FOV_DIAG_DEG:.2f}deg"
+                f" (FOV {FOV_W}x{FOV_H}).\n")
         f.write(" * Do not edit by hand; rerun export_tetra_db.py instead.\n")
         f.write(" */\n")
         f.write('#include "tetra_db.h"\n\n')

@@ -1,41 +1,14 @@
 from __future__ import annotations
 
 import math
+import os
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CATALOG = ROOT / "data" / "catalog.bin"
+sys.path.insert(0, str(ROOT))
 GENERATED_CATALOG_SOURCE = ROOT / "identifier" / "generated" / "catalog_db_generated.c"
-
-
-def parse_ra(text: str) -> float | None:
-    """
-    Converts fixed-width catalog RA text to degrees.
-    """
-
-    text = text.strip()
-    if len(text) < 6:
-        return None
-    try:
-        return (float(text[:2]) + float(text[2:4]) / 60.0 + float(text[4:]) / 3600.0) * 15.0
-    except ValueError:
-        return None
-
-
-def parse_dec(text: str) -> float | None:
-    """
-    Converts fixed-width catalog DEC text to degrees.
-    """
-
-    text = text.strip()
-    if len(text) < 6:
-        return None
-    try:
-        sign = -1.0 if text[0] == "-" else 1.0
-        body = text[1:] if text[0] in "+-" else text
-        return sign * (float(body[:2]) + float(body[2:4]) / 60.0 + float(body[4:]) / 3600.0)
-    except ValueError:
-        return None
+MAG_LIMIT = float(os.environ.get("STAR_DB_MAG", "7.5"))  # shared with export_tetra_db.py
 
 
 def q15(value: float) -> int:
@@ -85,18 +58,15 @@ def main() -> None:
     Generates the C catalog array, HR lookup table, and KD-tree for fast nearest-star lookup.
     """
 
+    from src.star_tracker_core import load_db_catalog
+
+    print(f"Loading Tycho-2 catalog (V <= {MAG_LIMIT})...")
+    df = load_db_catalog(MAG_LIMIT)
     catalog_rows: list[tuple[int, int, int, int, int]] = []
     kd_entries: list[tuple[float, float, float, int]] = []
-    for line in CATALOG.read_text(errors="ignore").splitlines():
-        try:
-            hr_id = int(line[0:4])
-            ra_degrees = parse_ra(line[75:83])
-            dec_degrees = parse_dec(line[83:90])
-            visual_magnitude = float(line[102:107])
-        except ValueError:
-            continue
-        if ra_degrees is None or dec_degrees is None:
-            continue
+    for hr_id, ra_degrees, dec_degrees, visual_magnitude in zip(
+        df["HR_clean"].astype(int), df["RA_deg"], df["DEC_deg"], df["Vmag"]
+    ):
         ra_radians = math.radians(ra_degrees)
         dec_radians = math.radians(dec_degrees)
         unit_x = math.cos(dec_radians) * math.cos(ra_radians)
@@ -119,7 +89,7 @@ def main() -> None:
     with GENERATED_CATALOG_SOURCE.open("w", newline="\n") as file:
         file.write("/**\n")
         file.write(" * Generated catalog database with KD-tree for nearest-star lookup.\n")
-        file.write(" * Source: data/catalog.bin\n")
+        file.write(f" * Source: data/tycho2.csv (Tycho-2, V <= {MAG_LIMIT})\n")
         file.write(" * Do not edit by hand; rerun export_catalog_db.py instead.\n")
         file.write(" */\n")
         file.write('#include "catalog_db.h"\n\n')

@@ -20,6 +20,11 @@ CATALOG_PATHS = (
     DATA_DIR / "catalog.bin",
 )
 
+TYCHO2_PATHS = (
+    DATA_DIR / "tycho2.csv",
+    DATA_DIR / "tycho2.parquet",
+)
+
 DEFAULT_DB_MAG_LIMIT = 6.5
 DEFAULT_MAX_FOV_DEG = 20.0
 DEFAULT_SEED = 42
@@ -161,6 +166,250 @@ def load_catalog(path: str | Path | None = None) -> pd.DataFrame:
     df = df.drop_duplicates("HR_clean").sort_values("Vmag").reset_index(drop=True)
     df["marker_size"] = np.clip((8.0 - df["Vmag"]) ** 2.0 * 0.6, 4.0, 120.0)
     return df[["HR_clean", "RA_deg", "DEC_deg", "Vmag", "marker_size"]]
+
+
+def load_db_catalog(mag_limit: float | None = None) -> pd.DataFrame:
+    """
+    Loads the Tycho-2 catalog subset used to build the runtime DBs.
+
+    Far denser than the Yale BSC (load_catalog), so small fields hold enough stars.
+    HR_clean is reindexed 0..N-1 after the magnitude cut so the baked uint16 ids stay
+    contiguous and below HR_INVALID (65535).
+
+    Args:
+        mag_limit: Faintest Johnson V to include (None = all in the cached file).
+
+    Returns:
+        DataFrame sorted by brightness: HR_clean(0..N-1), RA_deg, DEC_deg, Vmag, marker_size.
+    """
+    for candidate in TYCHO2_PATHS:
+        if candidate.exists():
+            path = candidate
+            break
+    else:
+        raise FileNotFoundError(
+            "Tycho-2 cache not found. Run: python scripts/fetch_tycho2.py --vmax 8.0 --out data/tycho2.csv"
+        )
+
+    df = pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
+    if mag_limit is not None:
+        df = df[df["Vmag"] <= mag_limit]
+    df = df.sort_values("Vmag").reset_index(drop=True)
+    if len(df) >= 0xFFFF:
+        raise ValueError(
+            f"{len(df)} stars at mag_limit={mag_limit} exceeds uint16 id space (<65535). "
+            "Lower the magnitude limit or widen the baked id type to uint32."
+        )
+    df["HR_clean"] = np.arange(len(df), dtype=int)  # reindex 0..N-1 after the cut
+    df["marker_size"] = np.clip((8.0 - df["Vmag"]) ** 2.0 * 0.6, 4.0, 120.0)
+    return df[["HR_clean", "RA_deg", "DEC_deg", "Vmag", "marker_size"]]
+
+
+def _fits_fov(pts: np.ndarray, fov_w_deg: float, fov_h_deg: float) -> bool:
+    """
+    True if the given unit vectors (a small star group) fit inside a fov_w x fov_h
+    rectangle at SOME rotation. Projects to the tangent plane at the group's mean
+    direction, then sweeps the rectangle orientation checking axis extents. Exact enough
+    for <~8 deg groups and cheap for <=4 points.
+    """
+    center = pts.mean(axis=0)
+    center = center / np.linalg.norm(center)
+    ref = np.array([0.0, 0.0, 1.0]) if abs(center[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    east = np.cross(ref, center); east /= np.linalg.norm(east)
+    north = np.cross(center, east)
+    deg = 57.29577951308232
+    px = (pts @ east) * deg
+    py = (pts @ north) * deg
+    # Vectorized over all rectangle orientations at once: extents per angle, then test fit.
+    thetas = np.arange(0.0, math.pi / 2 + 1e-9, math.radians(3.0))
+    c = np.cos(thetas)[:, None]; s = np.sin(thetas)[:, None]
+    x = px[None, :] * c + py[None, :] * s        # (T, n)
+    y = -px[None, :] * s + py[None, :] * c
+    w = x.max(axis=1) - x.min(axis=1)            # (T,)
+    h = y.max(axis=1) - y.min(axis=1)
+    fits = ((w <= fov_w_deg) & (h <= fov_h_deg)) | ((w <= fov_h_deg) & (h <= fov_w_deg))
+    return bool(fits.any())
+
+
+def greedy_feasible_tetrads(
+    vecs: np.ndarray,
+    n_anchors: int,
+    gather_rad: float,
+    fov_w_deg: float,
+    fov_h_deg: float,
+    c1: int,
+    c2: int,
+    c3: int,
+) -> list[tuple[int, int, int, int]]:
+    """
+    Greedy frame-feasible tetrad generation (anchor = brightest star).
+
+    For each anchor a, walking dimmer stars brightest-first: keep the brightest c1 that fit a
+    frame with a; for each, the brightest c2 (fainter) that fit a frame with {a,s2}; for each,
+    the brightest c3 that fit with {a,s2,s3}. Every emitted tetra is therefore a real possible
+    image (4 stars that fit one fov_w x fov_h frame), so no out-of-frame slots are wasted.
+    Size is bounded by anchors * c1 * c2 * c3. Indices increase (a<s2<s3<s4) so each is unique.
+    """
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(vecs)
+    chord_gather = 2.0 * math.sin(gather_rad / 2.0)
+    out: list[tuple[int, int, int, int]] = []
+    progress_start = time.time()
+
+    for a in range(n_anchors):
+        if (a + 1) % 1000 == 0 or a == n_anchors - 1:
+            elapsed = time.time() - progress_start
+            frac = (a + 1) / n_anchors
+            eta = elapsed / frac * (1.0 - frac) if frac > 0 else 0.0
+            print(f"    greedy {a + 1}/{n_anchors} anchors | {len(out)} tetrads"
+                  f" | elapsed {elapsed:.0f}s | eta {eta:.0f}s", flush=True)
+        nb = sorted(j for j in tree.query_ball_point(vecs[a], chord_gather) if j > a)
+        if len(nb) < 3:
+            continue
+        # Any two stars within the gather diagonal already fit one frame, so the brightest
+        # c1 dimmer neighbours are the 2nd-star candidates directly (no fit test needed here).
+        seconds = nb[:c1]
+        for s2 in seconds:
+            thirds = []
+            for s3 in nb:
+                if s3 <= s2:
+                    continue
+                if _fits_fov(vecs[[a, s2, s3]], fov_w_deg, fov_h_deg):
+                    thirds.append(s3)
+                    if len(thirds) == c2:
+                        break
+            for s3 in thirds:
+                found = 0
+                for s4 in nb:
+                    if s4 <= s3:
+                        continue
+                    if _fits_fov(vecs[[a, s2, s3, s4]], fov_w_deg, fov_h_deg):
+                        out.append((a, s2, s3, s4))
+                        found += 1
+                        if found == c3:
+                            break
+    return out
+
+
+def anchored_allcombos_tetrads(
+    vecs: np.ndarray,
+    n_anchors: int,
+    gather_rad: float,
+    max_edge_rad: float,
+    max_neighbours: int,
+    density_thresh: int | None = None,
+    k_low: int | None = None,
+) -> list[tuple[int, int, int, int]]:
+    """
+    Anchored all-combinations generation: each tetra owned by its brightest star.
+
+    For each anchor a, take the brightest `max_neighbours` dimmer stars within gather_rad and
+    emit EVERY (a + 3 of them) whose max pairwise edge <= max_edge_rad. Small gather_rad (~the
+    FOV half-diagonal) keeps the neighbour pool in-frame, so the combos are real frames; using
+    every star as an anchor covers edge-anchor fields via a more central anchor's compact subset.
+    Anchor is always the lowest index, so each 4-set is unique (no dedup needed).
+
+    Adaptive-K: if density_thresh and k_low are set, anchors with more than density_thresh
+    dimmer neighbours use k_low instead of max_neighbours. Dense sky regions are already covered
+    by many overlapping anchors, so fewer combos per anchor are needed there.
+    """
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(vecs)
+    chord_gather = 2.0 * math.sin(gather_rad / 2.0)
+    max_chord = 2.0 * math.sin(max_edge_rad / 2.0)
+    out: list[tuple[int, int, int, int]] = []
+
+    for a in range(n_anchors):
+        all_nb = sorted(j for j in tree.query_ball_point(vecs[a], chord_gather) if j > a)
+        k = (k_low if (density_thresh is not None and k_low is not None
+                       and len(all_nb) > density_thresh) else max_neighbours)
+        nb = all_nb[:k]
+        if len(nb) < 3:
+            continue
+        for trio in itertools.combinations(nb, 3):
+            combo = (a, *trio)
+            pts = vecs[list(combo)]
+            ok = True
+            for u in range(4):
+                for v in range(u + 1, 4):
+                    if np.linalg.norm(pts[u] - pts[v]) > max_chord:
+                        ok = False
+                        break
+                if not ok:
+                    break
+            if ok:
+                out.append(combo)
+    return out
+
+
+def anchored_tetrads(
+    vecs: np.ndarray,
+    n_anchors: int,
+    gather_rad: float,
+    max_edge_rad: float,
+    n_sectors: int,
+    per_sector: int,
+) -> list[tuple[int, int, int, int]]:
+    """
+    Anchored, direction-covering tetrad generation (shared by the exporter and the fast sweep).
+
+    Each tetra is owned by its brightest star (the anchor). For every anchor a < n_anchors:
+      - gather members strictly dimmer (index > a) within gather_rad (= FOV diagonal, so an
+        edge anchor still reaches companions on the opposite side of the frame);
+      - bin those companions by direction in the anchor's tangent plane into n_sectors angular
+        sectors and keep the brightest `per_sector` in each — this guarantees coverage in every
+        direction instead of letting globally-bright out-of-frame stars dominate;
+      - emit every (anchor + 3 of the kept companions) whose max pairwise edge <= max_edge_rad
+        (the 4 stars fit one frame). Anchor is always the lowest index, so each 4-set is unique.
+
+    vecs must be unit vectors sorted brightest-first (index = brightness rank).
+    Returns tetrads as 4-tuples of member indices.
+    """
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(vecs)
+    chord_gather = 2.0 * math.sin(gather_rad / 2.0)
+    max_chord = 2.0 * math.sin(max_edge_rad / 2.0)
+    out: list[tuple[int, int, int, int]] = []
+
+    for a in range(n_anchors):
+        anchor = vecs[a]
+        neighbours = [j for j in tree.query_ball_point(anchor, chord_gather) if j > a]
+        if len(neighbours) < 3:
+            continue
+        # Tangent-plane basis at the anchor for directional binning.
+        ref = np.array([0.0, 0.0, 1.0]) if abs(anchor[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+        east = np.cross(ref, anchor); east /= np.linalg.norm(east)
+        north = np.cross(anchor, east)
+
+        per_bin: dict[int, list[int]] = {}
+        for j in neighbours:  # neighbours ascending index == brightest-first
+            d = vecs[j] - anchor
+            sector = int((math.atan2(float(north @ d), float(east @ d)) + math.pi) / (2 * math.pi) * n_sectors)
+            sector = min(sector, n_sectors - 1)
+            bucket = per_bin.setdefault(sector, [])
+            if len(bucket) < per_sector:
+                bucket.append(j)
+
+        candidates = sorted(j for bucket in per_bin.values() for j in bucket)
+        if len(candidates) < 3:
+            continue
+        for trio in itertools.combinations(candidates, 3):
+            combo = (a, *trio)
+            pts = vecs[list(combo)]
+            ok = True
+            for u in range(4):
+                for v in range(u + 1, 4):
+                    if np.linalg.norm(pts[u] - pts[v]) > max_chord:
+                        ok = False
+                        break
+                if not ok:
+                    break
+            if ok:
+                out.append(combo)
+    return out
 
 
 def unit_vectors(ra_deg: np.ndarray | pd.Series, dec_deg: np.ndarray | pd.Series) -> np.ndarray:

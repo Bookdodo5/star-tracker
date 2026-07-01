@@ -61,6 +61,53 @@ static bool attitude_to_radecroll(const float rotation[3][3], double *ra, double
 }
 
 /**
+ * Runs only the centroid detector on one RGB frame and copies the detected pixel
+ * centroids out. Returns the number written (capped at max_out). Same detector the
+ * identify_* entry points use, so the overlay shows exactly what the solver sees.
+ */
+extern "C" __declspec(dllexport)
+int detect_centroids(const uint8_t *rgb, int width, int height, int morph_passes,
+                     uint16_t *out_x, uint16_t *out_y, int max_out) {
+    if (width <= 0 || height <= 0 || width * height > LIVE_MAX_PIXELS) return 0;
+
+    static std::vector<uint8_t> dog, morph;
+    dog.assign((size_t)width * height, 0);
+    morph.assign((size_t)width * height, 0);
+
+    uint16_t star_x[20], star_y[20];
+    uint64_t star_brightness[20];
+    int star_count = 0;
+    extract_centroids(rgb, dog.data(), morph.data(), star_x, star_y, star_brightness,
+                      &star_count, width, height, morph_passes);
+
+    int n = star_count < 20 ? star_count : 20;
+    if (n > max_out) n = max_out;
+    for (int i = 0; i < n; ++i) { out_x[i] = star_x[i]; out_y[i] = star_y[i]; }
+    return n;
+}
+
+/**
+ * Identifies an attitude directly from observed unit vectors (no image, no centroiding).
+ * Used by the synthetic accuracy harness: it builds observed vectors from the catalog at
+ * known attitudes and checks the solve. Vectors must be brightest-first (xyz triples).
+ * Returns 1 and fills RA/DEC/roll on a solve, 0 otherwise.
+ */
+extern "C" __declspec(dllexport)
+int identify_vectors(const float *xyz, int n, double *out_ra, double *out_dec, double *out_roll) {
+    if (n < 4) return 0;
+    int m = n < MAX_OBS_STARS ? n : MAX_OBS_STARS;
+    ObservedStar observed[MAX_OBS_STARS];
+    for (int i = 0; i < m; ++i) {
+        observed[i] = (ObservedStar){xyz[3 * i], xyz[3 * i + 1], xyz[3 * i + 2], (uint32_t)(m - i)};
+    }
+    MatchResult result;
+    identify_tetra(observed, (uint8_t)m, &result);
+    if (!result.success) return 0;
+    if (!attitude_to_radecroll(result.catalog_to_observed, out_ra, out_dec, out_roll)) return 0;
+    return 1;
+}
+
+/**
  * Identifies one RGB frame. Returns 1 and fills RA/DEC/roll on a solve, 0 if no
  * attitude was found, -2 if the frame is too large for the centroid buffers.
  * Scratch buffers are static (single-threaded), so no per-frame allocation churn.

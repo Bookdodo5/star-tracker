@@ -24,6 +24,8 @@ Screen capture is handy for pointing the pipeline at Stellarium or a star image 
 import argparse
 import ctypes
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import time
 from pathlib import Path
 
@@ -53,7 +55,24 @@ def load_lib():
         ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
         ctypes.POINTER(ctypes.c_double), ctypes.c_int,
     ]
+    if hasattr(lib, "identify_vectors"):
+        lib.identify_vectors.restype = ctypes.c_int
+        lib.identify_vectors.argtypes = [
+            ctypes.POINTER(ctypes.c_float), ctypes.c_int,
+            ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+        ]
     return lib
+
+
+def solve_vectors(lib, xyz):
+    """Solves attitude from observed unit vectors (brightest-first, shape (n,3)). Returns (ra,dec,roll) or None."""
+    import numpy as np
+    arr = np.ascontiguousarray(xyz, dtype=np.float32)
+    n = arr.shape[0]
+    ra, dec, roll = ctypes.c_double(), ctypes.c_double(), ctypes.c_double()
+    rc = lib.identify_vectors(arr.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), n,
+                              ctypes.byref(ra), ctypes.byref(dec), ctypes.byref(roll))
+    return (ra.value, dec.value, roll.value) if rc == 1 else None
 
 
 def solve(lib, bgr, fov, morph=1):
