@@ -5,7 +5,6 @@ Centroid/build/
 Centroid/build-mingw/
 identifier/build/
 identifier/build-c/
-identifier/generated/
 identifier/build-generated/
 identifier/build-generated-release/
 C/build/
