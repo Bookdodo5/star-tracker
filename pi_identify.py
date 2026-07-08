@@ -74,8 +74,9 @@ def _update_jpeg(gray: np.ndarray, att):
     small = cv2.resize(gray, (812, 618))
     bgr = cv2.cvtColor(small, cv2.COLOR_GRAY2BGR)
     if att:
-        label = f"RA={att[0]:.3f}  DEC={att[1]:.3f}  ROLL={att[2]:.2f}"
-        cv2.putText(bgr, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        qw, qx, qy, qz = att[3]
+        label = f"RA={att[0]:.3f}  DEC={att[1]:.3f}  ROLL={att[2]:.2f}  Q=({qw:.3f},{qx:.3f},{qy:.3f},{qz:.3f})"
+        cv2.putText(bgr, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
     else:
         cv2.putText(bgr, "NULL", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
     _, jpg = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
@@ -106,16 +107,20 @@ def _start_mjpeg_server(port: int):
 
 
 def _parse_attitude(stdout: str):
+    kv = {}
     for line in stdout.splitlines():
-        if "attitude_ra_deg=" in line:
-            try:
-                kv = dict(tok.split("=") for tok in line.split() if "=" in tok)
-                return (float(kv["attitude_ra_deg"]),
-                        float(kv["attitude_dec_deg"]),
-                        float(kv["attitude_roll_deg"]))
-            except (KeyError, ValueError):
-                pass
-    return None
+        if "attitude_ra_deg=" in line or "attitude_qw=" in line:
+            kv.update(tok.split("=") for tok in line.split() if "=" in tok)
+    if "attitude_ra_deg" not in kv:
+        return None
+    try:
+        return (float(kv["attitude_ra_deg"]),
+                float(kv["attitude_dec_deg"]),
+                float(kv["attitude_roll_deg"]),
+                (float(kv["attitude_qw"]), float(kv["attitude_qx"]),
+                 float(kv["attitude_qy"]), float(kv["attitude_qz"])))
+    except (KeyError, ValueError):
+        return None
 
 
 def _parse_calibrated_fov(stdout: str):
@@ -251,8 +256,9 @@ def main():
                 _update_jpeg(gray, att)
 
             if att:
+                qw, qx, qy, qz = att[3]
                 print(f"frame {frame_i:4d} | RA={att[0]:9.4f}  DEC={att[1]:8.4f}  "
-                      f"ROLL={att[2]:8.3f}  ({fps:.2f} fps)")
+                      f"ROLL={att[2]:8.3f}  Q=({qw:.4f},{qx:.4f},{qy:.4f},{qz:.4f})  ({fps:.2f} fps)")
             else:
                 print(f"frame {frame_i:4d} | NULL                                         "
                       f"({fps:.2f} fps)")

@@ -60,6 +60,36 @@ static bool attitude_to_radecroll(const float rotation[3][3], double *ra, double
     return true;
 }
 
+/** Converts a catalog->camera rotation matrix to a unit quaternion (w,x,y,z). */
+static void rotation_to_quaternion(const float m[3][3], double *qw, double *qx, double *qy, double *qz) {
+    float trace = m[0][0] + m[1][1] + m[2][2];
+    if (trace > 0.0f) {
+        float s = sqrtf(trace + 1.0f) * 2.0f;
+        *qw = 0.25 * s;
+        *qx = (m[2][1] - m[1][2]) / s;
+        *qy = (m[0][2] - m[2][0]) / s;
+        *qz = (m[1][0] - m[0][1]) / s;
+    } else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) {
+        float s = sqrtf(1.0f + m[0][0] - m[1][1] - m[2][2]) * 2.0f;
+        *qw = (m[2][1] - m[1][2]) / s;
+        *qx = 0.25 * s;
+        *qy = (m[0][1] + m[1][0]) / s;
+        *qz = (m[0][2] + m[2][0]) / s;
+    } else if (m[1][1] > m[2][2]) {
+        float s = sqrtf(1.0f + m[1][1] - m[0][0] - m[2][2]) * 2.0f;
+        *qw = (m[0][2] - m[2][0]) / s;
+        *qx = (m[0][1] + m[1][0]) / s;
+        *qy = 0.25 * s;
+        *qz = (m[1][2] + m[2][1]) / s;
+    } else {
+        float s = sqrtf(1.0f + m[2][2] - m[0][0] - m[1][1]) * 2.0f;
+        *qw = (m[1][0] - m[0][1]) / s;
+        *qx = (m[0][2] + m[2][0]) / s;
+        *qy = (m[1][2] + m[2][1]) / s;
+        *qz = 0.25 * s;
+    }
+}
+
 /**
  * Runs only the centroid detector on one RGB frame and copies the detected pixel
  * centroids out. Returns the number written (capped at max_out). Same detector the
@@ -90,10 +120,11 @@ int detect_centroids(const uint8_t *rgb, int width, int height, int morph_passes
  * Identifies an attitude directly from observed unit vectors (no image, no centroiding).
  * Used by the synthetic accuracy harness: it builds observed vectors from the catalog at
  * known attitudes and checks the solve. Vectors must be brightest-first (xyz triples).
- * Returns 1 and fills RA/DEC/roll on a solve, 0 otherwise.
+ * Returns 1 and fills RA/DEC/roll/quaternion(w,x,y,z) on a solve, 0 otherwise.
  */
 extern "C" __declspec(dllexport)
-int identify_vectors(const float *xyz, int n, double *out_ra, double *out_dec, double *out_roll) {
+int identify_vectors(const float *xyz, int n, double *out_ra, double *out_dec, double *out_roll,
+                     double *out_qw, double *out_qx, double *out_qy, double *out_qz) {
     if (n < 4) return 0;
     int m = n < MAX_OBS_STARS ? n : MAX_OBS_STARS;
     ObservedStar observed[MAX_OBS_STARS];
@@ -104,13 +135,14 @@ int identify_vectors(const float *xyz, int n, double *out_ra, double *out_dec, d
     identify_tetra(observed, (uint8_t)m, &result);
     if (!result.success) return 0;
     if (!attitude_to_radecroll(result.catalog_to_observed, out_ra, out_dec, out_roll)) return 0;
+    rotation_to_quaternion(result.catalog_to_observed, out_qw, out_qx, out_qy, out_qz);
     return 1;
 }
 
 /**
- * Identifies one RGB frame. Returns 1 and fills RA/DEC/roll on a solve, 0 if no
- * attitude was found, -2 if the frame is too large for the centroid buffers.
- * Scratch buffers are static (single-threaded), so no per-frame allocation churn.
+ * Identifies one RGB frame. Returns 1 and fills RA/DEC/roll/quaternion(w,x,y,z) on
+ * a solve, 0 if no attitude was found, -2 if the frame is too large for the centroid
+ * buffers. Scratch buffers are static (single-threaded), so no per-frame allocation churn.
  *
  * morph_passes tunes the centroid morphological open: 1 = satellite default (3x3
  * open), 0 = camera (skip the open so 1-2 px stars survive), N = repeat. See
@@ -118,7 +150,8 @@ int identify_vectors(const float *xyz, int n, double *out_ra, double *out_dec, d
  */
 extern "C" __declspec(dllexport)
 int identify_frame(const uint8_t *rgb, int width, int height, float fov_deg,
-                   double *out_ra, double *out_dec, double *out_roll, int morph_passes) {
+                   double *out_ra, double *out_dec, double *out_roll,
+                   double *out_qw, double *out_qx, double *out_qy, double *out_qz, int morph_passes) {
     if (width <= 0 || height <= 0 || width * height > LIVE_MAX_PIXELS) return -2;
 
     static std::vector<uint8_t> dog, morph;
@@ -146,6 +179,7 @@ int identify_frame(const uint8_t *rgb, int width, int height, float fov_deg,
     identify_tetra(observed, observed_count, &result);
     if (!result.success) return 0;
     if (!attitude_to_radecroll(result.catalog_to_observed, out_ra, out_dec, out_roll)) return 0;
+    rotation_to_quaternion(result.catalog_to_observed, out_qw, out_qx, out_qy, out_qz);
     return 1;
 }
 
@@ -158,6 +192,7 @@ int identify_frame(const uint8_t *rgb, int width, int height, float fov_deg,
 extern "C" __declspec(dllexport)
 int identify_frame_calibrate(const uint8_t *rgb, int width, int height, float seed_fov_deg,
                              double *out_ra, double *out_dec, double *out_roll,
+                             double *out_qw, double *out_qx, double *out_qy, double *out_qz,
                              double *out_fov_deg, int morph_passes) {
     if (width <= 0 || height <= 0 || width * height > LIVE_MAX_PIXELS) return -2;
 
@@ -185,6 +220,7 @@ int identify_frame_calibrate(const uint8_t *rgb, int width, int height, float se
     MatchResult result;
     if (!identify_tetra_calibrate(observed, observed_count, &result) || !result.success) return 0;
     if (!attitude_to_radecroll(result.catalog_to_observed, out_ra, out_dec, out_roll)) return 0;
+    rotation_to_quaternion(result.catalog_to_observed, out_qw, out_qx, out_qy, out_qz);
 
     /* Recover the true FOV from the focal scale: f_true = f_seed * focal_scale. */
     float recovered_focal = camera.fx * result.focal_scale;

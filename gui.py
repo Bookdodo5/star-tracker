@@ -51,7 +51,8 @@ def live_command(v):
     """`python live_identify.py ...` from the live-tab field values."""
     cmd = [sys.executable, str(ROOT / "live_identify.py"),
            "--source", v["source"], "--fov", v["fov"], "--morph", v["morph"], "--scale", v["scale"]]
-    for flag, key in (("--fov-search", "fov_search"), ("--show", "show"), ("--list-monitors", "list_monitors")):
+    for flag, key in (("--fov-search", "fov_search"), ("--show", "show"), ("--list-monitors", "list_monitors"),
+                      ("--quiet", "quiet"), ("--timing", "timing")):
         if v[key]:
             cmd.append(flag)
     for flag, key in (("--save", "save"), ("--monitor", "monitor"), ("--region", "region"),
@@ -104,6 +105,8 @@ LIVE_FIELDS = [
     ("cam_width", "Webcam width", "text", ""),
     ("cam_height", "Webcam height", "text", ""),
     ("list_monitors", "List monitors and exit", "check", False),
+    ("quiet", "Quiet (suppress NULL / no-solve lines)", "check", False),
+    ("timing", "Show centroid timing", "check", False),
 ]
 
 

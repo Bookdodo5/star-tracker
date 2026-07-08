@@ -23,6 +23,7 @@ Screen capture is handy for pointing the pipeline at Stellarium or a star image 
 """
 import argparse
 import ctypes
+import os
 import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -43,70 +44,80 @@ def load_lib():
                  "  cmake -S live -B live/build-mingw -G \"MinGW Makefiles\" -DCMAKE_BUILD_TYPE=Release\n"
                  "  cmake --build live/build-mingw")
     lib = ctypes.CDLL(str(DLL))
+    D = ctypes.POINTER(ctypes.c_double)
     lib.identify_frame.restype = ctypes.c_int
     lib.identify_frame.argtypes = [
         ctypes.POINTER(ctypes.c_uint8), ctypes.c_int, ctypes.c_int, ctypes.c_float,
-        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+        D, D, D, D, D, D, D,
         ctypes.c_int,
     ]
     lib.identify_frame_calibrate.restype = ctypes.c_int
     lib.identify_frame_calibrate.argtypes = [
         ctypes.POINTER(ctypes.c_uint8), ctypes.c_int, ctypes.c_int, ctypes.c_float,
-        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
-        ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+        D, D, D, D, D, D, D,
+        D, ctypes.c_int,
     ]
     if hasattr(lib, "identify_vectors"):
         lib.identify_vectors.restype = ctypes.c_int
         lib.identify_vectors.argtypes = [
             ctypes.POINTER(ctypes.c_float), ctypes.c_int,
-            ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+            D, D, D, D, D, D, D,
         ]
     return lib
 
 
 def solve_vectors(lib, xyz):
-    """Solves attitude from observed unit vectors (brightest-first, shape (n,3)). Returns (ra,dec,roll) or None."""
+    """Solves attitude from observed unit vectors (brightest-first, shape (n,3)).
+    Returns (ra, dec, roll, (qw,qx,qy,qz)) or None."""
     import numpy as np
     arr = np.ascontiguousarray(xyz, dtype=np.float32)
     n = arr.shape[0]
-    ra, dec, roll = ctypes.c_double(), ctypes.c_double(), ctypes.c_double()
+    ra, dec, roll, qw, qx, qy, qz = (ctypes.c_double() for _ in range(7))
     rc = lib.identify_vectors(arr.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), n,
-                              ctypes.byref(ra), ctypes.byref(dec), ctypes.byref(roll))
-    return (ra.value, dec.value, roll.value) if rc == 1 else None
+                              ctypes.byref(ra), ctypes.byref(dec), ctypes.byref(roll),
+                              ctypes.byref(qw), ctypes.byref(qx), ctypes.byref(qy), ctypes.byref(qz))
+    if rc != 1:
+        return None
+    return (ra.value, dec.value, roll.value, (qw.value, qx.value, qy.value, qz.value))
 
 
 def solve(lib, bgr, fov, morph=1):
-    """Runs the in-process pipeline on one BGR frame. Returns (ra, dec, roll) or None.
+    """Runs the in-process pipeline on one BGR frame. Returns (ra, dec, roll, (qw,qx,qy,qz)) or None.
 
     morph is the centroid morphological-open strength: 1 = satellite default,
     0 = camera (keep small/faint stars), N = repeat. See extract_centroids.
     """
     rgb = np.ascontiguousarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), dtype=np.uint8)
     h, w = rgb.shape[:2]
-    ra, dec, roll = ctypes.c_double(), ctypes.c_double(), ctypes.c_double()
+    ra, dec, roll, qw, qx, qy, qz = (ctypes.c_double() for _ in range(7))
     rc = lib.identify_frame(rgb.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
                             w, h, ctypes.c_float(fov),
-                            ctypes.byref(ra), ctypes.byref(dec), ctypes.byref(roll), morph)
-    return (ra.value, dec.value, roll.value) if rc == 1 else None
+                            ctypes.byref(ra), ctypes.byref(dec), ctypes.byref(roll),
+                            ctypes.byref(qw), ctypes.byref(qx), ctypes.byref(qy), ctypes.byref(qz), morph)
+    if rc != 1:
+        return None
+    return (ra.value, dec.value, roll.value, (qw.value, qx.value, qy.value, qz.value))
 
 
 def calibrate_fov(lib, bgr, seed_fov, morph=1):
     """Recovers the true FOV from one frame via C self-calibration; returns (fov, attitude) or (None, None).
 
-    The TETRA feature lookup is scale-invariant, so it finds the right tetrad even when seed_fov is
-    far off; the matched catalog's true angles then pin the focal length directly. One C call replaces
-    the old multi-solve FOV grid sweep. Use this once to lock a fixed camera/screen FOV.
+    attitude is (ra, dec, roll, (qw,qx,qy,qz)). The TETRA feature lookup is scale-invariant, so it
+    finds the right tetrad even when seed_fov is far off; the matched catalog's true angles then pin
+    the focal length directly. One C call replaces the old multi-solve FOV grid sweep. Use this once
+    to lock a fixed camera/screen FOV.
     """
     rgb = np.ascontiguousarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), dtype=np.uint8)
     h, w = rgb.shape[:2]
-    ra, dec, roll, fov_out = (ctypes.c_double() for _ in range(4))
+    ra, dec, roll, qw, qx, qy, qz, fov_out = (ctypes.c_double() for _ in range(8))
     rc = lib.identify_frame_calibrate(rgb.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
                                       w, h, ctypes.c_float(seed_fov),
                                       ctypes.byref(ra), ctypes.byref(dec), ctypes.byref(roll),
+                                      ctypes.byref(qw), ctypes.byref(qx), ctypes.byref(qy), ctypes.byref(qz),
                                       ctypes.byref(fov_out), morph)
     if rc != 1:
         return None, None
-    return fov_out.value, (ra.value, dec.value, roll.value)
+    return fov_out.value, (ra.value, dec.value, roll.value, (qw.value, qx.value, qy.value, qz.value))
 
 
 def list_monitors():
@@ -179,10 +190,18 @@ def main():
                              "FOV is unchanged, so attitude stays valid; only centroid precision drops.")
     parser.add_argument("--cam-width", type=int, help="request this capture width from a webcam")
     parser.add_argument("--cam-height", type=int, help="request this capture height from a webcam")
+    parser.add_argument("--quiet", action="store_true",
+                        help="only print frames that solve (suppress NULL / no-solve lines)")
+    parser.add_argument("--timing", action="store_true",
+                        help="print per-frame centroid timing from the C pipeline (off by default). "
+                             "Requires the DLL built with this change.")
     parser.add_argument("--show", action="store_true", help="show the video window with an attitude overlay")
     parser.add_argument("--save", help="write the first captured frame to this path (e.g. outputs/cap.ppm) and exit, "
                                        "so you can run it through the standalone centroid/identify pipeline")
     args = parser.parse_args()
+
+    if args.timing:  # read once by the DLL's getenv on the first centroid call
+        os.environ["STAR_CENTROID_TIMING"] = "1"
 
     if args.list_monitors:
         for i, (l, t, r, b) in enumerate(list_monitors(), 1):
@@ -220,33 +239,53 @@ def main():
         return
 
     print(f"[live] source={args.source} fov={args.fov} scale={args.scale}  (Ctrl+C to stop)")
+    # ponytail: 2 consecutive calibrations that agree on FOV required, to reject a lucky false lock.
+    # Agreement is on recovered FOV (the camera intrinsic, constant) NOT attitude: the field may be
+    # sweeping, so consecutive solves point elsewhere while the true FOV stays put.
+    CALIB_CONFIRM = 2
+    CALIB_AGREE_PCT = 0.05  # max fractional FOV difference between consecutive calibration results
     if args.fov_search:
-        print(f"[live] FOV self-calibration from seed {args.fov}; will lock on first solve")
+        print(f"[live] FOV self-calibration from seed {args.fov}; will lock after {CALIB_CONFIRM} agreeing solves")
     locked = not args.fov_search
-    frame_i, t0 = 0, time.time()
+    calib_window = []  # (fov, att) from recent consecutive calibration successes
+    frame_i, t_prev = 0, time.time()
     try:
         while True:
             ok, bgr = read_frame()
             if not ok:
                 break  # end of video file (a webcam/screen keeps returning frames)
             frame_i += 1
+            now = time.time()
+            fps = 1.0 / max(now - t_prev, 1e-6)
+            t_prev = now
             if args.scale != 1.0:
                 bgr = cv2.resize(bgr, None, fx=args.scale, fy=args.scale, interpolation=cv2.INTER_AREA)
-            if not locked:  # self-calibrate this frame to recover the true FOV, then reuse it
+            if not locked:  # self-calibrate to recover the true FOV; require CALIB_CONFIRM agreeing results
                 found, att = calibrate_fov(lib, bgr, args.fov, morph=args.morph)
                 if found:
-                    args.fov, locked = found, True
-                    print(f"[live] locked FOV = {found:.3f} deg")
+                    if calib_window and abs(found - calib_window[-1][0]) > CALIB_AGREE_PCT * calib_window[-1][0]:
+                        calib_window.clear()  # FOV disagreement: restart the confirmation window
+                    calib_window.append((found, att))
+                    if len(calib_window) < CALIB_CONFIRM:
+                        if not args.quiet:
+                            print(f"frame {frame_i:4d} | calibrating... ({len(calib_window)}/{CALIB_CONFIRM} agree)", flush=True)
+                        continue
+                    fov_locked = sum(f for f, _ in calib_window) / len(calib_window)
+                    args.fov, locked = fov_locked, True
+                    att = calib_window[-1][1]
+                    print(f"[live] locked FOV = {fov_locked:.3f} deg (confirmed {CALIB_CONFIRM} frames)", flush=True)
                 else:
-                    print(f"frame {frame_i:4d} | self-calibration found no solve; retrying next frame")
+                    if not args.quiet:
+                        print(f"frame {frame_i:4d} | self-calibration found no solve; retrying next frame", flush=True)
                     continue
             else:
                 att = solve(lib, bgr, args.fov, args.morph)
-            fps = frame_i / max(time.time() - t0, 1e-6)
             if att:
-                print(f"frame {frame_i:4d} | RA={att[0]:8.3f}  DEC={att[1]:8.3f}  ROLL={att[2]:8.3f}   ({fps:.1f} fps)")
-            else:
-                print(f"frame {frame_i:4d} | NULL                                   ({fps:.1f} fps)")
+                qw, qx, qy, qz = att[3]
+                print(f"frame {frame_i:4d} | RA={att[0]:8.3f}  DEC={att[1]:8.3f}  ROLL={att[2]:8.3f}  "
+                      f"Q=({qw:.4f},{qx:.4f},{qy:.4f},{qz:.4f})   ({fps:.1f} fps)", flush=True)
+            elif not args.quiet:
+                print(f"frame {frame_i:4d} | NULL                                   ({fps:.1f} fps)", flush=True)
             if args.show:
                 label = f"RA={att[0]:.2f} DEC={att[1]:.2f} ROLL={att[2]:.2f}" if att else "NULL"
                 cv2.putText(bgr, label, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2,

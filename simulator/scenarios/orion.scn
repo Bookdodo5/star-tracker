@@ -1,0 +1,9 @@
+# Dense Orion field - sanity regression
+config fov=10 mag=7.5 image_size=877
+commands
+point_at 83.8 -5.4
+hold 1
+point_at 101.3 -16.7
+hold 1
+end
+expect solve_pct>=100 mean_pointing_deg<0.05

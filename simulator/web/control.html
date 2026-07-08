@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Star Simulator Control</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #111; color: #ddd; padding: 12px; }
+  h2 { margin: 12px 0 6px; font-size: 15px; color: #9cf; }
+  button { background: #245; color: #fff; border: 0; border-radius: 5px; padding: 8px 12px; margin: 2px; cursor: pointer; }
+  button:active { background: #368; }
+  input { background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 5px; width: 60px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 3px 0; }
+  .slider { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .slider label { width: 110px; } .slider input[type=range] { flex: 1; } .slider span { width: 40px; text-align: right; }
+  pre { background: #000; padding: 8px; border-radius: 5px; white-space: pre-wrap; }
+  #status { color: #7d7; min-height: 18px; }
+</style>
+</head>
+<body>
+<h2>Command</h2>
+<div class="row">
+  RA <input id="ra" value="83.8"> DEC <input id="dec" value="-5.4"> Roll <input id="roll" value="0">
+  <button onclick="cmd(`point_at ${v('ra')} ${v('dec')} ${v('roll')}`)">Point at</button>
+</div>
+<div class="row">
+  Slew <input id="saxis" value="ra" style="width:44px"> <input id="sdelta" value="10"> deg @ <input id="srate" value="5"> /s
+  <button onclick="cmd(`slew ${v('saxis')} ${v('sdelta')} ${v('srate')}`)">Slew</button>
+</div>
+<div class="row">
+  <button onclick="cmd(`roll ${v('rrate')} forever`)">Roll</button> <input id="rrate" value="3"> /s
+  <button onclick="cmd(`tumble ${v('tra')} ${v('tdec')} ${v('troll')} forever`)">Tumble</button>
+  <input id="tra" value="2"> <input id="tdec" value="1"> <input id="troll" value="3">
+</div>
+<div class="row">
+  <input id="free" placeholder="type any command" style="width:200px">
+  <button onclick="cmd(v('free'))">Send</button>
+</div>
+
+<h2>Render</h2>
+<div id="sliders"></div>
+
+<h2>Tracker</h2>
+<div class="row">
+  <button onclick="post('/tracker/start')">Start</button>
+  <button onclick="post('/tracker/stop')">Stop</button>
+  <button onclick="post('/calibrate-delay')">Calibrate delay</button>
+  <button onclick="post('/flash-check')">Flash check</button>
+</div>
+
+<h2>Live</h2>
+<pre id="live">connecting...</pre>
+<div id="status"></div>
+
+<script>
+  const v = id => document.getElementById(id).value.trim();
+  const setStatus = t => document.getElementById('status').textContent = t;
+
+  async function post(path, body) {
+    try {
+      const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                   body: JSON.stringify(body || {})});
+      setStatus(JSON.stringify(await r.json()));
+    } catch (e) { setStatus('error: ' + e); }
+  }
+  const cmd = line => line && post('/command', {line});
+
+  // Config sliders (key, min, max, step) — mirror the render config.
+  const SLIDERS = [['gain',0.1,5,0.1],['gamma',1,8,0.1],['saturation_cap',50,255,5],
+                   ['noise_sigma',0,50,1],['blur_sigma',0,5,0.1],['streak_len',0,30,1],['streak_angle',0,180,5]];
+  const box = document.getElementById('sliders');
+  for (const [k,lo,hi,st] of SLIDERS) {
+    const d = document.createElement('div'); d.className = 'slider';
+    d.innerHTML = `<label>${k}</label><input type=range min=${lo} max=${hi} step=${st} id=s_${k}><span id=o_${k}></span>`;
+    box.appendChild(d);
+    const s = d.querySelector('input');
+    s.oninput = () => document.getElementById('o_'+k).textContent = s.value;
+    s.onchange = () => post('/config', {[k]: parseFloat(s.value)});
+  }
+
+  async function poll() {
+    try {
+      const s = await (await fetch('/status')).json();
+      const m = s.metrics;
+      document.getElementById('live').textContent =
+        `pointing_err : ${m.pointing_err_deg} deg\nroll_err     : ${m.roll_err_deg} deg\n` +
+        `delay        : ${m.delay} s\nsync_ok      : ${m.sync_ok}\nfps          : ${m.fps}\n` +
+        `tracker      : ${m.tracker_running ? 'running' : 'stopped'}\ntruth        : ${m.truth}\nestimate     : ${m.est}`;
+      // Initialise sliders from server config once.
+      if (!poll.init) { for (const [k] of SLIDERS) { const el = document.getElementById('s_'+k);
+        el.value = s.config[k]; document.getElementById('o_'+k).textContent = s.config[k]; } poll.init = true; }
+    } catch (e) { document.getElementById('live').textContent = '(no connection)'; }
+    setTimeout(poll, 500);
+  }
+  poll();
+</script>
+</body>
+</html>

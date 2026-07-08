@@ -1,0 +1,5 @@
+# Point at a dense field, settle, then roll forever (visual roll check).
+# Scoring only trusts the static holds; the roll is for eyeballing the display.
+point_at 83.8 -5.4 0
+hold 3
+roll 3 forever

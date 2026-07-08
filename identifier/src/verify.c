@@ -112,7 +112,8 @@ bool verify_attitude(
        generous per-star residual cap, but only a correct attitude keeps the mean
        residual small. This rejects confident false positives on real images. */
     result->success = result->count >= VERIFY_MIN_INLIERS &&
-                      result->mean_residual_arcsec <= VERIFY_MAX_MEAN_RESIDUAL_ARCSEC;
+                      result->mean_residual_arcsec <= VERIFY_MAX_MEAN_RESIDUAL_ARCSEC &&
+                      (uint32_t)result->count * 100u >= (uint32_t)observed_star_count * VERIFY_MIN_INLIER_PCT;
     result->score =
         (int32_t)result->count * 10000 -
         (int32_t)result->mean_residual_arcsec * 10 -

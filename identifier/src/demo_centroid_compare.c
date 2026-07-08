@@ -21,7 +21,39 @@ static float wrap_degrees(float angle_degrees) {
 }
 
 /**
- * Prints the catalog-to-camera attitude as matrix and boresight RA/DEC/roll.
+ * Converts a catalog->camera rotation matrix to a unit quaternion (w,x,y,z).
+ */
+static void rotation_to_quaternion(const float m[3][3], float *qw, float *qx, float *qy, float *qz) {
+    float trace = m[0][0] + m[1][1] + m[2][2];
+    if (trace > 0.0f) {
+        float s = sqrtf(trace + 1.0f) * 2.0f;
+        *qw = 0.25f * s;
+        *qx = (m[2][1] - m[1][2]) / s;
+        *qy = (m[0][2] - m[2][0]) / s;
+        *qz = (m[1][0] - m[0][1]) / s;
+    } else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) {
+        float s = sqrtf(1.0f + m[0][0] - m[1][1] - m[2][2]) * 2.0f;
+        *qw = (m[2][1] - m[1][2]) / s;
+        *qx = 0.25f * s;
+        *qy = (m[0][1] + m[1][0]) / s;
+        *qz = (m[0][2] + m[2][0]) / s;
+    } else if (m[1][1] > m[2][2]) {
+        float s = sqrtf(1.0f + m[1][1] - m[0][0] - m[2][2]) * 2.0f;
+        *qw = (m[0][2] - m[2][0]) / s;
+        *qx = (m[0][1] + m[1][0]) / s;
+        *qy = 0.25f * s;
+        *qz = (m[1][2] + m[2][1]) / s;
+    } else {
+        float s = sqrtf(1.0f + m[2][2] - m[0][0] - m[1][1]) * 2.0f;
+        *qw = (m[1][0] - m[0][1]) / s;
+        *qx = (m[0][2] + m[2][0]) / s;
+        *qy = (m[1][2] + m[2][1]) / s;
+        *qz = 0.25f * s;
+    }
+}
+
+/**
+ * Prints the catalog-to-camera attitude as matrix and boresight RA/DEC/roll/quaternion.
  */
 static void print_attitude(const char *name, const MatchResult *match_result) {
     if (!match_result->success) {
@@ -82,6 +114,13 @@ static void print_attitude(const char *name, const MatchResult *match_result) {
         match_result->catalog_to_observed[2][0],
         match_result->catalog_to_observed[2][1],
         match_result->catalog_to_observed[2][2]
+    );
+
+    float qw, qx, qy, qz;
+    rotation_to_quaternion(match_result->catalog_to_observed, &qw, &qx, &qy, &qz);
+    printf(
+        "%s attitude_qw=%.8f attitude_qx=%.8f attitude_qy=%.8f attitude_qz=%.8f\n",
+        name, qw, qx, qy, qz
     );
 }
 

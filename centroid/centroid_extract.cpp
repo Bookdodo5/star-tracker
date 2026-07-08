@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <chrono>
 
 // Centroid extraction pipeline:
@@ -253,9 +254,13 @@ void extract_centroids(const uint8_t* rgb_in, uint8_t* dog_out, uint8_t* morph_o
     }
     *star_count = found;
 
-    auto us = [](auto a, auto b){ return (int)std::chrono::duration_cast<std::chrono::microseconds>(b-a).count(); };
-    fprintf(stderr, "centroid timing (us): gray=%d integral=%d blurs=%d dog+thresh=%d morph=%d ccl=%d total=%d\n",
-            us(t0,t1), us(t1,t2), us(t2,t3), us(t3,t4), us(t4,t5), us(t5,t6), us(t0,t6));
+    // ponytail: timing is debug spam; off unless STAR_CENTROID_TIMING is set. getenv once.
+    static const bool print_timing = std::getenv("STAR_CENTROID_TIMING") != nullptr;
+    if (print_timing) {
+        auto us = [](auto a, auto b){ return (int)std::chrono::duration_cast<std::chrono::microseconds>(b-a).count(); };
+        fprintf(stderr, "centroid timing (us): gray=%d integral=%d blurs=%d dog+thresh=%d morph=%d ccl=%d total=%d\n",
+                us(t0,t1), us(t1,t2), us(t2,t3), us(t3,t4), us(t4,t5), us(t5,t6), us(t0,t6));
+    }
 }
 
 } // extern "C"

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Star Simulator</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #field { width: 100vw; height: 100vh; object-fit: contain; display: block; background: #000; }
+  #tap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+         color: #444; font: 14px system-ui, sans-serif; }
+  #tap.hidden { display: none; }
+</style>
+</head>
+<body>
+  <img id="field" src="/stream" alt="star field">
+  <div id="tap">tap to go fullscreen &amp; keep screen awake</div>
+<script>
+  // The phone is a passive optical target: show the MJPEG stream fullscreen and stop the
+  // screen from sleeping. Both need a user gesture on mobile, hence the tap overlay.
+  const tap = document.getElementById('tap');
+  let wakeLock = null;
+  async function activate() {
+    tap.classList.add('hidden');
+    try { await document.documentElement.requestFullscreen(); } catch (e) {}
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+  }
+  document.body.addEventListener('click', activate, { once: false });
+  // Re-acquire the wake lock if the tab is backgrounded then restored.
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && !wakeLock) {
+      try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+    }
+  });
+</script>
+</body>
+</html>

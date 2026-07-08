@@ -1,0 +1,16 @@
+# Step through several fields, holding each so the tracker can settle and be scored.
+# Each 'hold' is a clean, delay-immune measurement window.
+point_at 83.8 -5.4 0
+hold 4
+point_at 101.3 -16.7 0
+hold 4
+slew ra 10 5
+hold 4
+slew dec 5 5
+hold 4
+point_at 83.8 -5.4 0
+point_at HR2061
+hold 4
+slew ra 10 5
+slew dec 5 5
+roll 3 forever
