@@ -249,6 +249,7 @@ def main():
     st_datastream.start_acquisition(grab_count)
     st_device.acquisition_start()
 
+    RETRIEVE_TIMEOUT_MS = 5000  # cap the C grab wait so Ctrl-C is handled and stalls self-recover
     CALIB_CONFIRM = 2
     CALIB_AGREE_PCT = 0.05  # max fractional FOV difference between consecutive calibrations
     frame_i = 0
@@ -259,7 +260,14 @@ def main():
 
     try:
         while st_datastream.is_grabbing:
-            with st_datastream.retrieve_buffer() as st_buffer:
+            try:
+                buffer_ctx = st_datastream.retrieve_buffer(RETRIEVE_TIMEOUT_MS)
+            except TypeError:  # older binding: retrieve_buffer takes no timeout arg
+                buffer_ctx = st_datastream.retrieve_buffer()
+            except Exception as exc:  # timeout / transient grab error: don't hang, retry
+                print(f"[warn] no frame in {RETRIEVE_TIMEOUT_MS} ms; retrying ({exc})", flush=True)
+                continue
+            with buffer_ctx as st_buffer:
                 if not st_buffer.info.is_image_present:
                     continue
                 st_image = st_buffer.get_image()
