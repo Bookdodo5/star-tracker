@@ -248,7 +248,8 @@ def main():
         print(f"[live] FOV self-calibration from seed {args.fov}; will lock after {CALIB_CONFIRM} agreeing solves")
     locked = not args.fov_search
     calib_window = []  # (fov, att) from recent consecutive calibration successes
-    frame_i, t_prev = 0, time.time()
+    t_start = time.time()
+    frame_i, t_prev = 0, t_start
     try:
         while True:
             ok, bgr = read_frame()
@@ -280,12 +281,13 @@ def main():
                     continue
             else:
                 att = solve(lib, bgr, args.fov, args.morph)
+            elapsed = now - t_start
             if att:
                 qw, qx, qy, qz = att[3]
-                print(f"frame {frame_i:4d} | RA={att[0]:8.3f}  DEC={att[1]:8.3f}  ROLL={att[2]:8.3f}  "
+                print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | RA={att[0]:8.3f}  DEC={att[1]:8.3f}  ROLL={att[2]:8.3f}  "
                       f"Q=({qw:.4f},{qx:.4f},{qy:.4f},{qz:.4f})   ({fps:.1f} fps)", flush=True)
             elif not args.quiet:
-                print(f"frame {frame_i:4d} | NULL                                   ({fps:.1f} fps)", flush=True)
+                print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | NULL                                   ({fps:.1f} fps)", flush=True)
             if args.show:
                 label = f"RA={att[0]:.2f} DEC={att[1]:.2f} ROLL={att[2]:.2f}" if att else "NULL"
                 cv2.putText(bgr, label, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2,

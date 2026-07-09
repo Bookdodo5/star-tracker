@@ -111,7 +111,17 @@ def start_server(buffer: FrameBuffer, state=None, port: int = 8090, controller=N
             elif self.path.startswith("/calibrate-delay"):
                 self._controller_call(controller and controller.calibrate_delay)
             elif self.path.startswith("/flash-check"):
-                self._controller_call(controller and controller.flash_check)
+                if controller is not None:
+                    self._controller_call(controller.flash_check)
+                else:
+                    # No camera: just flash the display so you can visually verify rendering.
+                    def _flash():
+                        for color in [(180, 0, 0), (0, 180, 0), (0, 0, 180)]:
+                            state.set_flash(color)
+                            time.sleep(0.5)
+                        state.set_flash(None)
+                    threading.Thread(target=_flash, daemon=True).start()
+                    self._json({"ok": True, "result": "display flashed (no camera to detect round-trip)"})
             else:
                 self._json({"error": "unknown route"}, 404)
 
@@ -133,7 +143,7 @@ def start_server(buffer: FrameBuffer, state=None, port: int = 8090, controller=N
                     if data:
                         self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + data + b"\r\n")
                     time.sleep(0.03)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
 
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)

@@ -20,6 +20,12 @@
 #define CALIB_CONVERGE_TOL 0.001f
 #define CALIB_MIN_RATIO 0.05f
 #define CALIB_MAX_RATIO 20.0f
+/** Wall-clock budget per calibrate call. The bootstrap does O(C(query,4)*candidates) FULL
+    re-identifies, and a single inner identify_tetra on a dense wrong-FOV frame can take ~0.5s,
+    so a non-solving frame runs for minutes. Checked per candidate (not per seed) since inner
+    cost varies ~1000x. Past this, bail so the caller moves to the next frame. ~2s keeps genuine
+    solves (which early-exit well under it) while capping a hopeless frame. */
+#define CALIB_BUDGET_US 2000000u
 
 typedef struct {
     uint32_t node_id;
@@ -375,6 +381,7 @@ bool identify_tetra_calibrate(const ObservedStar *observed_stars, uint8_t observ
     if (query_star_count < 4 || observed_star_count > MAX_OBS_STARS) {
         return false;
     }
+    clock_t calib_start = clock();
 
     /* ponytail: O(C(query,4) * candidates) full re-identifies; bootstrap runs once, early-exits
        on the first solve, and the brightest real tetrad usually calibrates immediately. */
@@ -390,6 +397,9 @@ bool identify_tetra_calibrate(const ObservedStar *observed_stars, uint8_t observ
                     TetraCandidate candidates[TETRA_TOP_CANDIDATES];
                     uint8_t candidate_count = tetra_kd_search_topk(feature, candidates);
                     for (uint8_t candidate_index = 0; candidate_index < candidate_count; ++candidate_index) {
+                        if (elapsed_us(calib_start, clock()) > CALIB_BUDGET_US) {
+                            return false;  // budget exhausted: give up on this frame, caller retries the next
+                        }
                         const TetraKdNode *node = &tetra_kd_nodes[candidates[candidate_index].node_id];
                         float ratio;
                         if (!estimate_focal_ratio(observed_stars, observed_ids, node->hr, &ratio)) {
