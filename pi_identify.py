@@ -213,7 +213,7 @@ def main():
     st_device.acquisition_start()
 
     frame_i = 0
-    t0 = time.monotonic()
+    t0 = t_prev = time.monotonic()
     fov = args.fov
     fov_locked = not args.fov_search
 
@@ -236,16 +236,19 @@ def main():
 
             ppm, w, h = _gray_to_ppm(gray)
             frame_i += 1
-            fps = frame_i / max(time.monotonic() - t0, 1e-6)
+            now = time.monotonic()
+            fps = 1.0 / max(now - t_prev, 1e-6)
+            t_prev = now
+            elapsed = now - t0
 
             if not fov_locked:
                 att, found_fov = identify_frame_calibrate(ppm, w, h, fov, args.morph)
                 if att:
                     fov = found_fov
                     fov_locked = True
-                    print(f"[fov-search] locked FOV = {fov:.3f}°")
+                    print(f"[fov-search] locked FOV = {fov:.3f}°", flush=True)
                 else:
-                    print(f"frame {frame_i:4d} | NULL (fov-search seed={args.fov}°)   ({fps:.2f} fps)")
+                    print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | NULL (fov-search seed={args.fov}°)   ({fps:.2f} fps)", flush=True)
                     if args.stream:
                         _update_jpeg(gray, None)
                     continue
@@ -257,14 +260,14 @@ def main():
 
             if att:
                 qw, qx, qy, qz = att[3]
-                print(f"frame {frame_i:4d} | RA={att[0]:9.4f}  DEC={att[1]:8.4f}  "
-                      f"ROLL={att[2]:8.3f}  Q=({qw:.4f},{qx:.4f},{qy:.4f},{qz:.4f})  ({fps:.2f} fps)")
+                print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | RA={att[0]:9.4f}  DEC={att[1]:8.4f}  "
+                      f"ROLL={att[2]:8.3f}  Q=({qw:.4f},{qx:.4f},{qy:.4f},{qz:.4f})  ({fps:.2f} fps)", flush=True)
             else:
-                print(f"frame {frame_i:4d} | NULL                                         "
-                      f"({fps:.2f} fps)")
+                print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | NULL                                         "
+                      f"({fps:.2f} fps)", flush=True)
 
     except KeyboardInterrupt:
-        print("\n[pi_identify] stopped")
+        print("\n[pi_identify] stopped", flush=True)
     finally:
         st_device.acquisition_stop()
         st_datastream.stop_acquisition()
