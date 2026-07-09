@@ -59,15 +59,18 @@ def make_handler(video_path: Path):
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.end_headers()
 
-            with video_path.open("rb") as f:
-                f.seek(start)
-                remaining = end - start + 1
-                while remaining > 0:
-                    chunk = f.read(min(65536, remaining))
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    remaining -= len(chunk)
+            try:
+                with video_path.open("rb") as f:
+                    f.seek(start)
+                    remaining = end - start + 1
+                    while remaining > 0:
+                        chunk = f.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass  # ponytail: client seeked/closed mid-stream — normal for <video>, not an error
 
     return Handler
 

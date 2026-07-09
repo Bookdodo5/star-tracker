@@ -84,6 +84,30 @@ def _update_jpeg(gray: np.ndarray, att):
         _latest_jpeg[0] = jpg.tobytes()
 
 
+def _save_snapshot(path: str, gray: np.ndarray, ppm_bytes: bytes, w: int, h: int, morph: int):
+    """Save one native frame + a centroid overlay and print diagnostics (brightness, star count)."""
+    cv2.imwrite(path, gray)
+    print(f"[snapshot] saved {path}  size={w}x{h}  "
+          f"min={int(gray.min())} max={int(gray.max())} mean={gray.mean():.1f}", flush=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        csv = _centroid(ppm_bytes, morph, tmp)
+        if csv is None:
+            print("[snapshot] centroid extractor failed", flush=True)
+            return
+        rows = [r.split(",") for r in open(csv).read().splitlines()[1:] if r.strip()]
+        print(f"[snapshot] centroids found: {len(rows)}", flush=True)
+        overlay = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        for r in rows:
+            try:
+                cx, cy = float(r[0]), float(r[1])
+            except (IndexError, ValueError):
+                continue
+            cv2.circle(overlay, (int(cx), int(cy)), 12, (0, 255, 0), 2)
+        over_path = path.rsplit(".", 1)[0] + "_centroids.png"
+        cv2.imwrite(over_path, overlay)
+        print(f"[snapshot] overlay saved {over_path}", flush=True)
+
+
 def _update_jpeg_raw(gray: np.ndarray):
     """Encode the frame as JPEG with no overlay (raw camera preview)."""
     small = cv2.resize(gray, (812, 618))
@@ -203,6 +227,8 @@ def main():
                         help="disable MJPEG preview server")
     parser.add_argument("--port", type=int, default=8080,
                         help="MJPEG server port (default: 8080)")
+    parser.add_argument("--snapshot", metavar="PATH",
+                        help="grab one native frame, save it (+centroid overlay) to PATH, print stats, exit")
     args = parser.parse_args()
 
     if not args.stream_only:
@@ -261,6 +287,10 @@ def main():
                 continue
 
             ppm, w, h = _gray_to_ppm(gray)
+
+            if args.snapshot:
+                _save_snapshot(args.snapshot, gray, ppm, w, h, args.morph)
+                break
 
             if not fov_locked:
                 att, found_fov = identify_frame_calibrate(ppm, w, h, fov, args.morph)
