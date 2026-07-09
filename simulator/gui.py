@@ -104,7 +104,20 @@ class SimulatorGUI:
         out.grid(row=4, column=0, columnspan=3, sticky="ew", pady=4)
         self.readout = tk.StringVar(value="—")
         ttk.Label(out, textvariable=self.readout, font=("Consolas", 10), justify="left").grid(sticky="w")
-        ttk.Label(top, textvariable=self.status_var, foreground="#555").grid(row=5, column=0, columnspan=3, sticky="w")
+
+        # --- tracker log ---
+        log = ttk.LabelFrame(top, text="Tracker output", padding=6)
+        log.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=4)
+        top.rowconfigure(5, weight=1)
+        self.tracker_log = tk.Text(log, height=10, width=80, font=("Consolas", 9),
+                                   bg="#111", fg="#ddd", state="disabled", wrap="none")
+        sb = ttk.Scrollbar(log, command=self.tracker_log.yview)
+        self.tracker_log.configure(yscrollcommand=sb.set)
+        self.tracker_log.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        log.rowconfigure(0, weight=1); log.columnconfigure(0, weight=1)
+
+        ttk.Label(top, textvariable=self.status_var, foreground="#555").grid(row=6, column=0, columnspan=3, sticky="w")
 
     # --- command actions (quick POSTs, run inline) ---
     def _send(self, line: str) -> None:
@@ -164,6 +177,14 @@ class SimulatorGUI:
             f"truth        : {m.get('truth')}\n"
             f"estimate     : {m.get('est')}"
         )
+        lines = status.get("tracker_lines")
+        if lines is not None:
+            text = "\n".join(lines)
+            self.tracker_log.configure(state="normal")
+            self.tracker_log.delete("1.0", "end")
+            self.tracker_log.insert("end", text)
+            self.tracker_log.see("end")
+            self.tracker_log.configure(state="disabled")
 
 
 def main() -> None:

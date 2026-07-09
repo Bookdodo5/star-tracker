@@ -80,7 +80,8 @@ def start_server(buffer: FrameBuffer, state=None, port: int = 8090, controller=N
             elif self.path.startswith("/status"):
                 if state is None:
                     return self._json({"error": "no state"}, 503)
-                self._json({"metrics": state.get_metrics(), "config": state.get_config()})
+                self._json({"metrics": state.get_metrics(), "config": state.get_config(),
+                            "tracker_lines": state.get_tracker_lines()})
             elif self.path.startswith("/control"):
                 self._html(_CONTROL_HTML)
             else:

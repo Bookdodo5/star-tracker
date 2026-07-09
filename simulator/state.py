@@ -8,6 +8,7 @@ attitude ``Resolver`` is never mutated from two threads.
 """
 from __future__ import annotations
 
+import collections
 import queue
 import threading
 
@@ -35,6 +36,7 @@ class SimState:
             "sync_ok": False, "fps": 0.0, "truth": None, "est": None, "tracker_running": False,
         }
         self._flash_color = None            # None, or an (r,g,b) tuple to fill the whole frame
+        self._tracker_lines: collections.deque[str] = collections.deque(maxlen=30)
         self.commands: queue.Queue[str] = queue.Queue()
 
     # --- config (render params) ---
@@ -58,6 +60,15 @@ class SimState:
     def update_metrics(self, updates: dict) -> None:
         with self._lock:
             self._metrics.update(updates)
+
+    # --- tracker stdout log ---
+    def append_tracker_line(self, line: str) -> None:
+        with self._lock:
+            self._tracker_lines.append(line.rstrip("\n"))
+
+    def get_tracker_lines(self) -> list[str]:
+        with self._lock:
+            return list(self._tracker_lines)
 
     # --- flash override (sync visual check) ---
     def get_flash(self):

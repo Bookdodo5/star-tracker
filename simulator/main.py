@@ -117,6 +117,7 @@ class TrackerController:
 
     def _read_loop(self) -> None:
         for line in self._proc.stdout:
+            self._state.append_tracker_line(line)
             self.ingest(line)
         self._state.update_metrics({"tracker_running": False})
 
