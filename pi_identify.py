@@ -84,6 +84,14 @@ def _update_jpeg(gray: np.ndarray, att):
         _latest_jpeg[0] = jpg.tobytes()
 
 
+def _update_jpeg_raw(gray: np.ndarray):
+    """Encode the frame as JPEG with no overlay (raw camera preview)."""
+    small = cv2.resize(gray, (812, 618))
+    _, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    with _jpeg_lock:
+        _latest_jpeg[0] = jpg.tobytes()
+
+
 class _MJPEGHandler(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
@@ -181,6 +189,8 @@ def main():
                         help="horizontal FOV in degrees (seed if --fov-search)")
     parser.add_argument("--fov-search", action="store_true",
                         help="calibrate FOV from seed, lock on first solve")
+    parser.add_argument("--stream-only", action="store_true",
+                        help="only serve the raw camera MJPEG preview; skip centroid/identify")
     parser.add_argument("--morph", type=int, default=0,
                         help="centroid morph passes: 0=real stars (default), 1+=satellite blobs")
     parser.add_argument("--scale", type=float, default=1.0,
@@ -195,9 +205,10 @@ def main():
                         help="MJPEG server port (default: 8080)")
     args = parser.parse_args()
 
-    _check_bins()
+    if not args.stream_only:
+        _check_bins()
 
-    if args.stream:
+    if args.stream or args.stream_only:
         _start_mjpeg_server(args.port)
 
     st.initialize()
@@ -212,10 +223,13 @@ def main():
     st_datastream.start_acquisition(grab_count)
     st_device.acquisition_start()
 
+    CALIB_CONFIRM = 2
+    CALIB_AGREE_PCT = 0.05  # max fractional FOV difference between consecutive calibrations
     frame_i = 0
     t0 = t_prev = time.monotonic()
     fov = args.fov
     fov_locked = not args.fov_search
+    calib_window = []  # (fov, att) from recent consecutive calibration successes
 
     try:
         while st_datastream.is_grabbing:
@@ -234,12 +248,19 @@ def main():
                 gray = _resize_gray(gray, args.scale)
                 h, w = gray.shape
 
-            ppm, w, h = _gray_to_ppm(gray)
             frame_i += 1
             now = time.monotonic()
             fps = 1.0 / max(now - t_prev, 1e-6)
             t_prev = now
             elapsed = now - t0
+
+            if args.stream_only:
+                _update_jpeg_raw(gray)
+                if frame_i % 30 == 0:
+                    print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | stream-only ({fps:.1f} fps)", flush=True)
+                continue
+
+            ppm, w, h = _gray_to_ppm(gray)
 
             if not fov_locked:
                 att, found_fov = identify_frame_calibrate(ppm, w, h, fov, args.morph)
