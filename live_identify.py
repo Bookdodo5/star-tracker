@@ -12,11 +12,11 @@ entry point a firmware loop would call. Build the DLL first:
     cmake --build live/build-mingw
 
 Usage:
-    python scripts/live_identify.py --source 0                 # notebook camera (index 0)
-    python scripts/live_identify.py --source path/to/video.avi # video file
-    python scripts/live_identify.py --source screen            # capture the whole screen
-    python scripts/live_identify.py --source screen --region 100,100,877,877  # a sub-region
-    python scripts/live_identify.py --source video.avi --fov 17.75 --scale 0.5 --show
+    python live_identify.py --source 0                 # notebook camera (index 0)
+    python live_identify.py --source path/to/video.avi # video file
+    python live_identify.py --source screen            # capture the whole screen
+    python live_identify.py --source screen --region 100,100,877,877  # a sub-region
+    python live_identify.py --source video.avi --fov 17.75 --scale 0.5 --show
 
 The notebook camera will print NULL constantly -- correct, it cannot see real stars.
 Screen capture is handy for pointing the pipeline at Stellarium or a star image on screen.
@@ -27,6 +27,7 @@ import os
 import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+import threading
 import time
 from pathlib import Path
 
@@ -35,6 +36,30 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent
 DLL = ROOT / "live" / "build-mingw" / "libstar_live.dll"
+
+
+class _Tee:
+    """Duplicates a text stream to a log file, so everything printed to the
+    console (attitude lines, warnings) is also recorded on disk. stdout must
+    stay live because simulator/feed.py parses it -- hence tee, not redirect."""
+    def __init__(self, stream, log_file):
+        self._stream = stream
+        self._log = log_file
+
+    def write(self, text):
+        self._stream.write(text)
+        self._log.write(text)
+
+    def flush(self):
+        self._stream.flush()
+        self._log.flush()
+
+
+def _tee_output_to(log_path):
+    """Appends all stdout/stderr of this process to log_path (line-buffered)."""
+    log_file = open(log_path, "a", buffering=1, encoding="utf-8", errors="replace")
+    sys.stdout = _Tee(sys.stdout, log_file)
+    sys.stderr = _Tee(sys.stderr, log_file)
 
 
 def load_lib():
@@ -69,7 +94,6 @@ def load_lib():
 def solve_vectors(lib, xyz):
     """Solves attitude from observed unit vectors (brightest-first, shape (n,3)).
     Returns (ra, dec, roll, (qw,qx,qy,qz)) or None."""
-    import numpy as np
     arr = np.ascontiguousarray(xyz, dtype=np.float32)
     n = arr.shape[0]
     ra, dec, roll, qw, qx, qy, qz = (ctypes.c_double() for _ in range(7))
@@ -118,6 +142,49 @@ def calibrate_fov(lib, bgr, seed_fov, morph=1):
     if rc != 1:
         return None, None
     return fov_out.value, (ra.value, dec.value, roll.value, (qw.value, qx.value, qy.value, qz.value))
+
+
+class LatestFrameReader:
+    """
+    Camera-like sampling for LIVE sources (webcam, http/rtsp stream).
+
+    cv2.VideoCapture + the OS queue every frame; if solving is slower than the source,
+    the queue grows and each solve describes an ever-older scene — poison for any
+    closed-loop use (differencing stale estimates fakes huge rates). A real camera has
+    no queue: it exposes whatever is in front of it *now*. This reproduces that: a drain
+    thread reads the source flat-out keeping only the newest frame; read() blocks until
+    a frame you haven't seen, then hands over the freshest one. Intermediate frames are
+    dropped by design. Never use for video files (there you want every frame).
+    """
+
+    def __init__(self, cap):
+        self._cap = cap
+        self._lock = threading.Lock()
+        self._frame = None
+        self._alive = True
+        threading.Thread(target=self._drain, daemon=True).start()
+
+    def _drain(self):
+        while self._alive:
+            ok, frame = self._cap.read()
+            if not ok:            # stream ended / source died
+                self._alive = False
+                return
+            with self._lock:
+                self._frame = frame   # overwrite: only the newest survives
+
+    def read(self, timeout_s: float = 10.0):
+        """Blocks until a new frame arrives (or timeout/source death); returns (ok, frame)."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            with self._lock:
+                frame, self._frame = self._frame, None  # take-and-clear: each frame solved once
+            if frame is not None:
+                return True, frame
+            if not self._alive:
+                return False, None
+            time.sleep(0.005)
+        return False, None
 
 
 def list_monitors():
@@ -198,7 +265,13 @@ def main():
     parser.add_argument("--show", action="store_true", help="show the video window with an attitude overlay")
     parser.add_argument("--save", help="write the first captured frame to this path (e.g. outputs/cap.ppm) and exit, "
                                        "so you can run it through the standalone centroid/identify pipeline")
+    parser.add_argument("--log", default="run.log", metavar="PATH",
+                        help="append all console output to this file (default: run.log; '' to disable). "
+                             "Tail it live with tools/serve_log.py")
     args = parser.parse_args()
+
+    if args.log:
+        _tee_output_to(args.log)
 
     if args.timing:  # read once by the DLL's getenv on the first centroid call
         os.environ["STAR_CENTROID_TIMING"] = "1"
@@ -223,7 +296,11 @@ def main():
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.cam_width)
             if args.cam_height:
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.cam_height)
-        read_frame = cap.read
+        live = isinstance(source, int) or str(source).startswith(("http://", "https://", "rtsp://"))
+        if live:  # live source: always solve the *newest* frame, never a queued backlog
+            read_frame = LatestFrameReader(cap).read
+        else:     # video file: sequential, every frame matters
+            read_frame = cap.read
 
     if args.save:
         ok, bgr = read_frame()
@@ -250,6 +327,7 @@ def main():
     calib_window = []  # (fov, att) from recent consecutive calibration successes
     t_start = time.time()
     frame_i, t_prev = 0, t_start
+    last_att = None  # most recent successful solve; held through NULL frames (real-time coasting)
     try:
         while True:
             ok, bgr = read_frame()
@@ -283,15 +361,26 @@ def main():
                 att = solve(lib, bgr, args.fov, args.morph)
             elapsed = now - t_start
             if att:
+                last_att = att
                 qw, qx, qy, qz = att[3]
                 print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | RA={att[0]:8.3f}  DEC={att[1]:8.3f}  ROLL={att[2]:8.3f}  "
                       f"Q=({qw:.4f},{qx:.4f},{qy:.4f},{qz:.4f})   ({fps:.1f} fps)", flush=True)
+            elif last_att is not None:
+                # no solve this frame: coast on the last attitude, but mark it as held (stale)
+                print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | NULL (hold) RA={last_att[0]:8.3f}  DEC={last_att[1]:8.3f}  "
+                      f"ROLL={last_att[2]:8.3f}   ({fps:.1f} fps)", flush=True)
             elif not args.quiet:
                 print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | NULL                                   ({fps:.1f} fps)", flush=True)
             if args.show:
-                label = f"RA={att[0]:.2f} DEC={att[1]:.2f} ROLL={att[2]:.2f}" if att else "NULL"
-                cv2.putText(bgr, label, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                            (0, 255, 0) if att else (0, 0, 255), 2)
+                if att:
+                    label = f"RA={att[0]:.2f} DEC={att[1]:.2f} ROLL={att[2]:.2f}"
+                    color = (0, 255, 0)
+                elif last_att is not None:
+                    label = f"HOLD RA={last_att[0]:.2f} DEC={last_att[1]:.2f} ROLL={last_att[2]:.2f}"
+                    color = (0, 200, 255)  # amber: held/stale
+                else:
+                    label, color = "NULL", (0, 0, 255)
+                cv2.putText(bgr, label, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2)
                 try:
                     cv2.imshow("live_identify", bgr)
                     if cv2.waitKey(1) == 27:  # Esc

@@ -20,17 +20,23 @@
   // screen from sleeping. Both need a user gesture on mobile, hence the tap overlay.
   const tap = document.getElementById('tap');
   let wakeLock = null;
+  async function acquireWakeLock() {
+    try {
+      wakeLock = await navigator.wakeLock?.request('screen');
+      // The browser silently releases the lock when the tab is backgrounded; null the
+      // handle on release so the visibilitychange re-acquire below actually fires.
+      wakeLock?.addEventListener('release', () => { wakeLock = null; });
+    } catch (e) {}
+  }
   async function activate() {
     tap.classList.add('hidden');
     try { await document.documentElement.requestFullscreen(); } catch (e) {}
-    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+    await acquireWakeLock();
   }
   document.body.addEventListener('click', activate, { once: false });
   // Re-acquire the wake lock if the tab is backgrounded then restored.
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState === 'visible' && !wakeLock) {
-      try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {}
-    }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !wakeLock) acquireWakeLock();
   });
 </script>
 </body>

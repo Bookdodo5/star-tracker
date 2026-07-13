@@ -382,9 +382,13 @@ bool identify_tetra_calibrate(const ObservedStar *observed_stars, uint8_t observ
         return false;
     }
     clock_t calib_start = clock();
+    MatchResult best;
+    bool found_best = false;
+    memset(&best, 0, sizeof(best));
 
-    /* ponytail: O(C(query,4) * candidates) full re-identifies; bootstrap runs once, early-exits
-       on the first solve, and the brightest real tetrad usually calibrates immediately. */
+    /* ponytail: O(C(query,4) * candidates) full re-identifies; bootstrap only runs until FOV locks.
+       Keep the best verified candidate instead of the first one, because false FOVs can pass a
+       weak early tetrad before the real FOV candidate is reached. */
     for (uint8_t first = 0; first < query_star_count - 3; ++first) {
         for (uint8_t second = first + 1; second < query_star_count - 2; ++second) {
             for (uint8_t third = second + 1; third < query_star_count - 1; ++third) {
@@ -398,6 +402,10 @@ bool identify_tetra_calibrate(const ObservedStar *observed_stars, uint8_t observ
                     uint8_t candidate_count = tetra_kd_search_topk(feature, candidates);
                     for (uint8_t candidate_index = 0; candidate_index < candidate_count; ++candidate_index) {
                         if (elapsed_us(calib_start, clock()) > CALIB_BUDGET_US) {
+                            if (found_best) {
+                                *result = best;
+                                return true;
+                            }
                             return false;  // budget exhausted: give up on this frame, caller retries the next
                         }
                         const TetraKdNode *node = &tetra_kd_nodes[candidates[candidate_index].node_id];
@@ -411,14 +419,20 @@ bool identify_tetra_calibrate(const ObservedStar *observed_stars, uint8_t observ
                         }
                         MatchResult attempt;
                         if (identify_tetra(rescaled, observed_star_count, &attempt) && attempt.success) {
-                            *result = attempt;
-                            result->focal_scale = ratio;
-                            return true;
+                            attempt.focal_scale = ratio;
+                            if (!found_best || attempt.score > best.score) {
+                                best = attempt;
+                                found_best = true;
+                            }
                         }
                     }
                 }
             }
         }
     }
-    return false;
+    if (!found_best) {
+        return false;
+    }
+    *result = best;
+    return true;
 }

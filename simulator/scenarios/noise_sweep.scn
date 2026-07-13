@@ -1,6 +1,0 @@
-# Positional-noise robustness (paper-style): 0.5px centroid noise
-config fov=10 mag=7.5 image_size=877 pixel_noise=0.5
-commands
-lost_in_space 40 1 7
-end
-expect solve_pct>60

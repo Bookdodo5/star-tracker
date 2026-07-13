@@ -175,17 +175,21 @@ class Resolver:
             return (ra, dec, roll), False
         raise ValueError(f"unhandled command kind {cmd.kind!r}")
 
-    def inject(self, command: Command, now: float) -> None:
+    def inject(self, commands: Command | list[Command], now: float) -> None:
         """
-        Interrupts the current motion with ``command`` starting now, seeded from the current
-        attitude (live-command semantics). Discards the remaining queue.
+        Interrupts the current motion with ``commands`` starting now, seeded from the current
+        attitude (live-command semantics). Discards the remaining queue. Accepts a single
+        ``Command`` or a list (e.g. ``lost_in_space`` expands to many point_at/hold pairs that
+        must all play in order, not just the first).
 
         Order matters: capture the current attitude *before* mutating, then reset all four
         bookkeeping fields, else the injected command sees a stale ``elapsed`` and a slew/roll
         jumps to its end instantly.
         """
+        if isinstance(commands, Command):
+            commands = [commands]
         att, _ = self.attitude(now)          # (a) current resolved attitude, before mutation
-        self._queue = [command]              # (b)
+        self._queue = list(commands)         # (b)
         self._index = 0                      # (c)
         self._start_att = att                # (d)
         self._cmd_start_t = now              # (e)

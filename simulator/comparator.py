@@ -24,9 +24,10 @@ HOW IT IS HANDLED (so you don't have to think about it)
    **static** (a ``hold``/settled ``point_at`` window). During a hold, the truth is the
    same for a whole second regardless of the exact delay, so the error number is immune to
    any delay-estimate error. This is the "no headache" default: park the attitude, measure.
-4. ``--pipeline-delay`` sets the compensation for scoring *moving* samples too (opt-in via
-   ``--score-moving``). If you don't know it, run ``estimate_delay`` on a run that contains a
-   step: it finds the lag between a commanded jump and when the estimate follows.
+4. ``--pipeline-delay`` sets the compensation (moving samples are still logged to the CSV
+   and can be summarised with ``summary(static_only=False)``). If you don't know the delay,
+   run ``estimate_delay`` on a run that contains a step: it finds the lag between a
+   commanded jump and when the estimate follows (the /calibrate-delay route does this).
 
 Every sample (static and moving) is always logged to CSV; only the *summary* filters.
 """
@@ -161,7 +162,7 @@ class Comparator:
             self._csv_file = None
 
 
-def estimate_delay(timeline: TruthTimeline, estimates: list[tuple[float, tuple[float, float, float]]],
+def estimate_delay(estimates: list[tuple[float, tuple[float, float, float]]],
                    step_time: float, new_pointing: tuple[float, float], match_deg: float = 0.5) -> Optional[float]:
     """
     One-shot pipeline-delay measurement from a commanded step.

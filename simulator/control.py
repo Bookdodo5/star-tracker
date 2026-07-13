@@ -1,5 +1,6 @@
 """
-CLI client for the running simulator's HTTP control API. Also the HTTP layer the GUI reuses.
+CLI client for the running simulator's HTTP control API — the scriptable remote
+(interactive use is easier via the web page at http://<host>:8090/control).
 
     python -m simulator.control point_at 83.8 -5.4        # send a live command
     python -m simulator.control roll 3 forever
@@ -46,7 +47,7 @@ def join_command(tokens: list[str]) -> str:
     return " ".join(tokens)
 
 
-# --- thin API wrappers (reused by the GUI) ---
+# --- thin API wrappers (importable for scripting) ---
 def send_command(host: str, line: str) -> dict:
     return _post(host, "/command", {"line": line})
 

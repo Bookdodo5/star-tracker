@@ -11,7 +11,8 @@ Serves, on one port over the local network:
     ``POST /tracker/stop``   stop the tracker child    (needs a controller)
     ``POST /calibrate-delay`` measure + set pipeline_delay (needs a controller)
 
-The phone opens ``http://<host>:<port>/``; the CLI and GUI drive the JSON routes. This
+The phone opens ``http://<host>:<port>/``; the web control page (``/control``) and the
+CLI drive the JSON routes. This
 mirrors the MJPEG pattern proven in pi_identify.py — HTTP-native, no build step, no Vercel
 (an HTTPS host would trip mixed-content blocking on the HTTP stream).
 """
@@ -138,12 +139,14 @@ def start_server(buffer: FrameBuffer, state=None, port: int = 8090, controller=N
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.end_headers()
-            try:
+            last = None  # send each rendered frame once — re-sending duplicates makes a
+            try:         # slower-than-render consumer fall ever further behind (stale solves)
                 while True:
                     data = buffer.get()
-                    if data:
+                    if data and data is not last:  # identity check: every render is a new bytes object
                         self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + data + b"\r\n")
-                    time.sleep(0.03)
+                        last = data
+                    time.sleep(0.01)
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
 

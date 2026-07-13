@@ -22,6 +22,17 @@ DEFAULT_CONFIG = {
     "blur_sigma": 0.0,       # gaussian defocus blur (0 = off)
     "streak_len": 0.0,       # directional motion-streak length in px (0 = off)
     "streak_angle": 0.0,     # streak direction in degrees
+    "blob_size": 1.1,        # PSF sigma (px) at mag 2 — realistic: near-point, just resolvable
+    "blob_scale": 0.18,      # PSF sigma change (px) per magnitude, brighter = bigger
+    # --- display + alignment aids (seeded from --fov in main.py; overlays are human
+    #     alignment marks — turn them off before scoring, the centroider sees the lines) ---
+    "fov_deg": 10.0,         # horizontal FOV the field is rendered at (degrees→pixels scale)
+    "grid": 0.0,             # 1 = draw an angular grid centred on boresight
+    "grid_spacing_deg": 2.0, # grid line spacing in degrees
+    "guide": 0.0,            # 1 = draw the camera-frame rectangle (aim the camera to fill it)
+    "guide_fov_deg": 10.0,   # horizontal FOV the guide rectangle represents (the camera's FOV)
+    "guide_aspect": 1.3333,  # guide rectangle width/height (camera aspect ratio)
+    "crosshair": 0.0,        # 1 = draw a small boresight cross at frame centre
 }
 
 
@@ -33,7 +44,8 @@ class SimState:
         self._config = dict(DEFAULT_CONFIG)
         self._metrics = {
             "pointing_err_deg": None, "roll_err_deg": None, "delay": pipeline_delay,
-            "sync_ok": False, "fps": 0.0, "truth": None, "est": None, "tracker_running": False,
+            "sync_ok": False, "fps": 0.0, "truth": None, "est": None, "est_t": None,
+            "tracker_running": False,
         }
         self._flash_color = None            # None, or an (r,g,b) tuple to fill the whole frame
         self._tracker_lines: collections.deque[str] = collections.deque(maxlen=30)

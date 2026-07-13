@@ -36,17 +36,6 @@ def build_commands():
     return cmds
 
 
-def identify_command(mode, path, fov, fov_search, morph, glob_pat):
-    """`python identify.py <mode> <path> ...` from the identify-section values."""
-    sub = {"image": "image", "folder": "batch", "video": "video"}[mode]
-    cmd = [sys.executable, str(ROOT / "identify.py"), sub, path, "--fov", fov, "--morph", morph]
-    if fov_search:
-        cmd.append("--fov-search")
-    if mode == "folder" and glob_pat.strip():
-        cmd += ["--glob", glob_pat.strip()]
-    return cmd
-
-
 def live_command(v):
     """`python live_identify.py ...` from the live-tab field values."""
     cmd = [sys.executable, str(ROOT / "live_identify.py"),
@@ -129,10 +118,9 @@ def main():
     ttk.Button(top, text="Build", command=lambda: run_async(build_commands(), log)).pack(side="left")
     ttk.Label(top, text="compile the identification library (run once)").pack(side="left", padx=8)
 
-    # Live and Identify side by side so neither pushes the log off-screen
     cols = ttk.Frame(win); cols.pack(side="top", fill="x", padx=10, pady=(4, 0))
 
-    # Live identify
+    # Live identify (a still image or video file also works as --source: OpenCV reads both)
     form = ttk.LabelFrame(cols, text="Live identify", padding=10); form.pack(side="left", fill="both", expand=True)
     vars_ = {}
     for row, (key, label, kind, default) in enumerate(LIVE_FIELDS):
@@ -160,47 +148,6 @@ def main():
         run_async([live_command(values)], log)
     ttk.Button(form, text="Run live", command=run_live).grid(row=len(LIVE_FIELDS), column=0,
                                                              columnspan=3, sticky="w", pady=(8, 0))
-
-    # Identify (still image / folder / video)
-    idf = ttk.LabelFrame(cols, text="Identify", padding=10)
-    idf.pack(side="left", fill="both", expand=True, padx=(10, 0))
-    mode = tk.StringVar(value="image")
-    ipath = tk.StringVar(value="")
-    ifov = tk.StringVar(value="10")
-    isearch = tk.BooleanVar(value=False)
-    imorph = tk.StringVar(value="0")
-    iglob = tk.StringVar(value="*.ppm")
-    ttk.Label(idf, text="Mode").grid(row=0, column=0, sticky="w", padx=(0, 8))
-    ttk.Combobox(idf, textvariable=mode, values=["image", "folder", "video"], width=8,
-                 state="readonly").grid(row=0, column=1, sticky="w")
-    ttk.Label(idf, text="Path").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=2)
-    ttk.Entry(idf, textvariable=ipath, width=40).grid(row=1, column=1, sticky="we")
-
-    def ipick():
-        p = filedialog.askdirectory() if mode.get() == "folder" else filedialog.askopenfilename()
-        if p:
-            ipath.set(p)
-    ttk.Button(idf, text="…", width=3, command=ipick).grid(row=1, column=2, padx=(4, 0))
-    ttk.Label(idf, text="FOV seed (deg)").grid(row=2, column=0, sticky="w", padx=(0, 8))
-    ttk.Entry(idf, textvariable=ifov, width=10).grid(row=2, column=1, sticky="w")
-    ttk.Checkbutton(idf, text="Self-calibrate FOV", variable=isearch).grid(row=3, column=1, sticky="w")
-    ttk.Label(idf, text="Morph passes").grid(row=4, column=0, sticky="w", padx=(0, 8))
-    ttk.Entry(idf, textvariable=imorph, width=10).grid(row=4, column=1, sticky="w")
-    ttk.Label(idf, text="Folder glob").grid(row=5, column=0, sticky="w", padx=(0, 8))
-    ttk.Entry(idf, textvariable=iglob, width=14).grid(row=5, column=1, sticky="w")
-    idf.columnconfigure(1, weight=1)
-
-    def run_identify():
-        if not DLL.exists():
-            log.insert("end", "\n[gui] library not built yet -- click Build first.\n"); log.see("end")
-            return
-        if not ipath.get().strip():
-            log.insert("end", "\n[gui] pick a path to identify.\n"); log.see("end")
-            return
-        run_async([identify_command(mode.get(), ipath.get().strip(), ifov.get(),
-                                    isearch.get(), imorph.get(), iglob.get())], log)
-    ttk.Button(idf, text="Run identify", command=run_identify).grid(row=6, column=0, columnspan=3,
-                                                                    sticky="w", pady=(8, 0))
 
     win.mainloop()
 

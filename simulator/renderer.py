@@ -31,9 +31,8 @@ import render_catalog_test_image as R  # noqa: E402  (camera_basis + unit_vector
 from .state import DEFAULT_CONFIG  # noqa: E402
 
 FLOOR = 90.0        # min amplitude for a drawn star (keeps faint stars centroid-able)
-MAG_REF = 2.0       # magnitude that saturates at gain=1
-BASE_SIGMA = 1.1    # PSF sigma (px) for faint stars
-BLOOM = 0.18        # extra PSF sigma per magnitude brighter than MAG_REF
+MAG_REF = 2.0       # magnitude at which PSF sigma is config["blob_size"]
+SIGMA_MIN = 0.6     # smallest PSF sigma regardless of config (faint stars still centroid-able)
 
 
 def pogson_amplitude(mag, config: dict):
@@ -82,12 +81,17 @@ class Renderer:
             raise ValueError(f"id {hr_id} not in catalog (mag limit)")
         return float(self._ra[row]), float(self._dec[row])
 
-    def _project(self, ra: float, dec: float, roll_deg: float):
-        """Vectorized pinhole projection → (xs, ys, mags) of in-frame stars. Matches R.project_stars."""
+    def _project(self, ra: float, dec: float, roll_deg: float, fov_deg: float | None = None):
+        """Vectorized pinhole projection → (xs, ys, mags) of in-frame stars. Matches R.project_stars.
+
+        ``fov_deg`` overrides the construction FOV (the display FOV is live-adjustable for
+        alignment); ``observed_vectors`` leaves it None so the headless path stays fixed.
+        """
+        fov_deg = self.fov_deg if fov_deg is None else fov_deg
         basis = np.array(R.camera_basis(ra, dec))          # rows: camera_x, camera_y, camera_z
         cam = self._vecs @ basis.T                         # (N, 3): cam_x, cam_y, cam_z
         z = cam[:, 2]
-        focal = (self.image_size * 0.5) / math.tan(math.radians(self.fov_deg) * 0.5)
+        focal = (self.image_size * 0.5) / math.tan(math.radians(fov_deg) * 0.5)
         center = (self.image_size - 1) * 0.5
         with np.errstate(divide="ignore", invalid="ignore"):
             xs = focal * cam[:, 0] / z + center
@@ -128,7 +132,9 @@ class Renderer:
     def _draw(self, img, xs, ys, mags, config: dict) -> None:
         """Adds a small gaussian blob per star; brighter stars are larger (PSF bloom)."""
         amps = pogson_amplitude(mags, config)
-        sigmas = BASE_SIGMA + BLOOM * np.maximum(0.0, MAG_REF - mags)
+        base_sigma = config.get("blob_size", DEFAULT_CONFIG["blob_size"])
+        bloom = config.get("blob_scale", DEFAULT_CONFIG["blob_scale"])
+        sigmas = np.maximum(SIGMA_MIN, base_sigma + bloom * (MAG_REF - mags))
         for x, y, amp, sigma in zip(xs, ys, amps, sigmas):
             radius = max(2, int(math.ceil(3 * sigma)))
             x0, y0 = int(round(x)), int(round(y))
@@ -162,14 +168,63 @@ class Renderer:
                roll_sign: float = 1.0, config: dict | None = None) -> bytes:
         """Renders the field at ``(ra, dec, roll)`` with ``config`` and returns JPEG bytes."""
         config = config or dict(DEFAULT_CONFIG)
+        fov = config.get("fov_deg", self.fov_deg)
         img = np.full((self.image_size, self.image_size, 3), 8, np.uint8)
-        xs, ys, mags = self._project(ra, dec, roll_sign * roll)
+        xs, ys, mags = self._project(ra, dec, roll_sign * roll, fov)
         self._draw(img, xs, ys, mags, config)
         img = self._aberrations(img, config)
+        self._overlay(img, config, fov)  # alignment aids stay crisp (drawn after aberrations)
         ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
         if not ok:
             raise RuntimeError("JPEG encode failed")
         return jpg.tobytes()
+
+    def _overlay(self, img, config: dict, fov_deg: float) -> None:
+        """Draws the alignment aids (all off by default, each gated by its config toggle):
+
+        - ``grid``: gnomonic angular grid at ``grid_spacing_deg`` off boresight — an angular ruler.
+        - ``guide``: the camera-frame rectangle at ``guide_fov_deg`` × ``guide_aspect``. When the
+          display FOV is wider than the camera FOV this sits inside the field (overscan), giving a
+          target to fill: aim the camera so it sees only stars, no rectangle edge.
+        - ``crosshair``: a small boresight cross at frame centre.
+
+        Colours are BGR (OpenCV). These are for the human eye during setup — the tracker's
+        centroider would read the lines as stars, so toggle them off before scoring.
+        """
+        if not (config.get("grid") or config.get("guide") or config.get("crosshair")):
+            return
+        size = self.image_size
+        focal = (size * 0.5) / math.tan(math.radians(fov_deg) * 0.5)
+        center = (size - 1) * 0.5
+        if config.get("grid"):
+            spacing = max(0.25, config.get("grid_spacing_deg", 2.0))
+            k = 1
+            while True:
+                off = focal * math.tan(math.radians(k * spacing))
+                if off >= size:  # this ring and every wider one is off-screen
+                    break
+                for signed in (off, -off):
+                    p = int(round(center + signed))
+                    if 0 <= p < size:
+                        cv2.line(img, (p, 0), (p, size - 1), (70, 100, 70), 1)
+                        cv2.line(img, (0, p), (size - 1, p), (70, 100, 70), 1)
+                k += 1
+            c = int(round(center))  # brighter boresight axes
+            cv2.line(img, (c, 0), (c, size - 1), (95, 140, 95), 1)
+            cv2.line(img, (0, c), (size - 1, c), (95, 140, 95), 1)
+        if config.get("guide"):
+            gfov = max(0.1, config.get("guide_fov_deg", fov_deg))
+            aspect = max(0.1, config.get("guide_aspect", 4.0 / 3.0))
+            half_w = focal * math.tan(math.radians(gfov) * 0.5)
+            half_h = half_w / aspect
+            cv2.rectangle(img, (int(round(center - half_w)), int(round(center - half_h))),
+                          (int(round(center + half_w)), int(round(center + half_h))),
+                          (30, 160, 230), 1)  # amber
+        if config.get("crosshair"):
+            c = int(round(center))
+            arm = max(6, size // 40)
+            cv2.line(img, (c - arm, c), (c + arm, c), (220, 200, 120), 1)  # cyan
+            cv2.line(img, (c, c - arm), (c, c + arm), (220, 200, 120), 1)
 
 
 def flash_jpeg(image_size: int, color: tuple[int, int, int]) -> bytes:
@@ -199,6 +254,10 @@ def _demo() -> None:
     lin = dict(cfg, gamma=1.0, gain=1.0, saturation_cap=10000.0)
     ratio = float(pogson_amplitude(4.0, lin) / pogson_amplitude(6.0, lin))
     assert abs(ratio - 6.3096) < 0.01, ratio
+    # Blob size scales with magnitude across the whole range, not just brighter than MAG_REF.
+    bs, bl = cfg["blob_size"], cfg["blob_scale"]
+    s2, s4, s8 = (max(SIGMA_MIN, bs + bl * (MAG_REF - m)) for m in (2.0, 4.0, 8.0))
+    assert s2 > s4 > s8 == SIGMA_MIN, (s2, s4, s8)
     # AC5: different gain/gamma give different mean intensity on the same field.
     r = Renderer(image_size=200, fov_deg=10.0, magnitude_limit=7.5)
     import numpy as _np
@@ -210,6 +269,12 @@ def _demo() -> None:
     noised = r.render(83.8, -5.4, config=dict(cfg, noise_sigma=25.0))
     assert clean == r.render(83.8, -5.4, config=cfg), "zero-aberration render not deterministic"
     assert noised != clean, "noise had no effect"
+    assert r.render(83.8, -5.4, config=dict(cfg, blob_size=2.5)) != clean, "blob_size had no effect"
+    assert r.render(83.8, -5.4, config=dict(cfg, blob_scale=0.4)) != clean, "blob_scale had no effect"
+    # Alignment overlays: each toggle must change the frame; runtime FOV changes projection.
+    for key, val in (("grid", 1.0), ("guide", 1.0), ("crosshair", 1.0)):
+        assert r.render(83.8, -5.4, config=dict(cfg, **{key: val})) != clean, f"{key} overlay had no effect"
+    assert r.render(83.8, -5.4, config=dict(cfg, fov_deg=20.0)) != clean, "runtime FOV had no effect"
     print(f"renderer.py self-check passed ({len(r._ids)} Tycho stars ≤7.5)")
 
 

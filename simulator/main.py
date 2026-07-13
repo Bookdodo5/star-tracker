@@ -1,14 +1,16 @@
 """
 Star simulator entry point (Pi-side orchestrator).
 
-Wires: attitude source -> renderer -> MJPEG stream (phone displays it), an HTTP control API
+Wires: command resolver (live-injectable attitude) -> renderer -> MJPEG stream (phone
+displays it), an HTTP control API
 (live commands / render config / status / tracker start-stop / delay calibration), and an
 optional tracker feed -> comparator (score the tracker's attitude against commanded truth).
 
-    # Display + control (open http://<this-host>:8090/ on the phone; drive it with the GUI/CLI):
+    # Display + control (open http://<this-host>:8090/ on the phone; drive it from the web
+    # control page at /control or the CLI):
     python -m simulator.main --commands simulator/examples/point_scan.txt --fov 10
 
-    # Let the simulator spawn + score the tracker (Start/Stop from the GUI, or --autostart):
+    # Let the simulator spawn + score the tracker (Start/Stop from the web page, or --autostart):
     python -m simulator.main --fov 10 --tracker "python pi_identify.py --fov 10 --no-stream" --autostart
 
     # Or pipe a tracker in on stdin instead of spawning it:
@@ -20,6 +22,7 @@ numbers are only trustworthy over static holds — see simulator/comparator.py.
 from __future__ import annotations
 
 import argparse
+import csv
 import shlex
 import socket
 import subprocess
@@ -28,11 +31,10 @@ import threading
 import time
 from pathlib import Path
 
-from .commands import parse_commands
+from .commands import Resolver, parse_commands
 from .comparator import Comparator, TruthTimeline, estimate_delay
 from .feed import parse_line
 from .renderer import Renderer, flash_jpeg
-from .source import CommandQueueSource, ReplaySource
 from .state import SimState
 from .stream_server import FrameBuffer, start_server
 
@@ -65,35 +67,53 @@ def _lan_ip_candidates() -> list[str]:
     return [guess] + sorted(ips - {guess})
 
 
-def _build_source(args, renderer: Renderer):
-    """
-    Returns an attitude source. Command / static / default all use a CommandQueueSource so
-    live commands always work; --replay uses a fixed ReplaySource (live commands don't apply).
-    """
+def _build_resolver(args, renderer: Renderer) -> Resolver:
+    """Live-commandable attitude resolver, seeded from --static / --commands / --start-*."""
     start = (args.start_ra, args.start_dec, args.start_roll)
-    if args.replay:
-        return ReplaySource(Path(args.replay))
     if args.static is not None:
         ra, dec, roll = args.static
-        return CommandQueueSource(parse_commands(f"point_at {ra} {dec} {roll}"), start)
+        return Resolver(parse_commands(f"point_at {ra} {dec} {roll}"), start)
     commands = []
     if args.commands:
         commands = parse_commands(Path(args.commands).read_text(), renderer.hr_lookup)
-    return CommandQueueSource(commands, start)
+    return Resolver(commands, start)
+
+
+def _log_lost_in_space(commands, state: SimState) -> None:
+    """
+    Prints each lost_in_space target's RA/DEC (to stdout and the web control log) and appends
+    them to outputs/lost_in_space_targets.csv, so the commanded targets survive after the run
+    for later comparison against the tracker's estimates.
+    """
+    path = PROJECT_ROOT / "outputs" / "lost_in_space_targets.csv"
+    path.parent.mkdir(exist_ok=True)
+    is_new = not path.exists()
+    with open(path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if is_new:
+            writer.writerow(["timestamp", "ra", "dec", "roll"])
+        for c in commands:
+            if c.kind != "point_at":
+                continue
+            ra, dec, roll = c.params["ra"], c.params["dec"], c.params["roll"]
+            writer.writerow([f"{time.time():.3f}", ra, dec, roll])
+            line = f"[lost_in_space] target ra={ra:.4f} dec={dec:.4f} roll={roll:.4f}"
+            print(f"[simulator] {line}")
+            state.append_tracker_line(line)
 
 
 class TrackerController:
     """
     Manages the tracker child process and delay calibration. Given to the HTTP server so the
-    GUI can Start/Stop the tracker and trigger calibration remotely. Minimal by design: start
-    = Popen + reader thread; stop = terminate; a dead child just flips ``tracker_running``.
+    web control page can Start/Stop the tracker and trigger calibration remotely. Minimal by
+    design: start = Popen + reader thread; stop = terminate; a dead child just flips
+    ``tracker_running``.
     """
 
-    def __init__(self, state: SimState, comparator: Comparator, timeline: TruthTimeline,
+    def __init__(self, state: SimState, comparator: Comparator,
                  tracker_cmd: str | None, t0: float, preview_url: str = "http://127.0.0.1:8080/"):
         self._state = state
         self._comparator = comparator
-        self._timeline = timeline
         self._cmd = tracker_cmd
         self._t0 = t0
         self._preview_url = preview_url
@@ -108,7 +128,8 @@ class TrackerController:
         t_recv = time.monotonic() - self._t0
         self._estimates.append((t_recv, est))
         comparison = self._comparator.add_estimate(t_recv, est)
-        metrics = {"est": est}
+        # est_t lets HTTP clients (OpticalDUT) tell a *fresh* estimate from a repeated stale one.
+        metrics = {"est": est, "est_t": round(t_recv, 3)}
         if comparison is not None:
             metrics.update(pointing_err_deg=round(comparison.pointing_err_deg, 4),
                            roll_err_deg=round(comparison.roll_err_deg, 4),
@@ -171,7 +192,7 @@ class TrackerController:
         self._estimates = [e for e in self._estimates if e[0] >= step_time]  # only post-step
         self._state.put_command(f"point_at {new_ra} {truth[1]} {truth[2]}")  # via mailbox (render thread injects)
         time.sleep(settle_s)
-        delay = estimate_delay(self._timeline, list(self._estimates), step_time, new_pointing)
+        delay = estimate_delay(list(self._estimates), step_time, new_pointing)
         if delay is None:
             return {"ok": False, "reason": "estimate never reached the commanded step"}
         self._comparator.set_delay(delay)
@@ -191,7 +212,6 @@ def main() -> None:
 
     src = p.add_argument_group("attitude source (default: live commands from --start-*)")
     src.add_argument("--commands", help="command script file (see simulator/examples)")
-    src.add_argument("--replay", help="CSV timeline t,ra,dec,roll to replay (no live commands)")
     src.add_argument("--static", nargs=3, type=float, metavar=("RA", "DEC", "ROLL"),
                      help="start at a fixed attitude (still accepts live commands)")
     src.add_argument("--start-ra", type=float, default=83.8, help="initial RA")
@@ -211,8 +231,9 @@ def main() -> None:
     args = p.parse_args()
 
     renderer = Renderer(args.image_size, args.fov, args.mag_limit, args.catalog)
-    source = _build_source(args, renderer)
+    resolver = _build_resolver(args, renderer)
     state = SimState(pipeline_delay=args.pipeline_delay)
+    state.update_config({"fov_deg": args.fov, "guide_fov_deg": args.fov})  # seed align defaults from --fov
 
     timeline = TruthTimeline()
     scoring = args.compare_stdin or args.tracker
@@ -224,7 +245,7 @@ def main() -> None:
 
     t0 = time.monotonic()
     if comparator is not None:
-        controller = TrackerController(state, comparator, timeline, args.tracker, t0, args.preview_url)
+        controller = TrackerController(state, comparator, args.tracker, t0, args.preview_url)
 
     buffer = FrameBuffer()
     start_server(buffer, state, args.port, controller)
@@ -232,7 +253,7 @@ def main() -> None:
     for ip in _lan_ip_candidates():
         print(f"    http://{ip}:{args.port}/")
     print("[simulator] (the first is a guess and may be a VPN tunnel; the WiFi one is usually 192.168.* or 172.*)")
-    print(f"[simulator] FOV={args.fov}  size={args.image_size}  fps={args.fps}  source={type(source).__name__}")
+    print(f"[simulator] FOV={args.fov}  size={args.image_size}  fps={args.fps}")
     if comparator is not None:
         print(f"[simulator] scoring -> {csv_path}  (delay={args.pipeline_delay}s)")
 
@@ -241,25 +262,27 @@ def main() -> None:
     if args.autostart and controller is not None:
         print(f"[simulator] {controller.start_tracker()} tracker: {args.tracker}")
 
-    can_inject = isinstance(source, CommandQueueSource)
     period = 1.0 / max(args.fps, 0.1)
     frames = 0
     try:
         while True:
             now = time.monotonic()
             t = now - t0
-            if can_inject:
-                for line in state.drain_commands():
-                    try:
-                        source.inject(parse_commands(line, renderer.hr_lookup)[0], t)
-                    except (ValueError, IndexError) as exc:
-                        print(f"[simulator] bad command {line!r}: {exc}", file=sys.stderr)
-            (ra, dec, roll), moving = source.attitude(t)
+            for line in state.drain_commands():
+                try:
+                    parsed = parse_commands(line, renderer.hr_lookup)
+                except (ValueError, IndexError) as exc:
+                    print(f"[simulator] bad command {line!r}: {exc}", file=sys.stderr)
+                    continue
+                if line.strip().split()[0].lower() == "lost_in_space":
+                    _log_lost_in_space(parsed, state)
+                resolver.inject(parsed, t)
+            (ra, dec, roll), moving = resolver.attitude(t)
             timeline.record(t, ra, dec, roll, moving)
             # Fill priority: sync flash (calibration) > command blank/flash > rendered stars.
             fill = state.get_flash()
-            if fill is None and can_inject:
-                fill = source.display_color()
+            if fill is None:
+                fill = resolver.display_color()
             if fill is not None:
                 buffer.set(flash_jpeg(args.image_size, fill))
             else:

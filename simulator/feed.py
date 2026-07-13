@@ -21,7 +21,15 @@ _RA = re.compile(r"\bRA=\s*(-?\d+\.?\d*)\s+DEC=\s*(-?\d+\.?\d*)\s+ROLL=\s*(-?\d+
 
 
 def parse_line(line: str) -> Optional[tuple[float, float, float]]:
-    """Returns ``(ra_deg, dec_deg, roll_deg)`` from a tracker stdout line, or None."""
+    """Returns ``(ra_deg, dec_deg, roll_deg)`` from a tracker stdout line, or None.
+
+    Any line containing NULL is a no-solve frame — including the coasting form
+    ``NULL (hold) RA=...`` where the printed attitude is a stale, held value, not a fresh
+    estimate. Scoring those against a moving truth would fake large errors, so they parse
+    to None.
+    """
+    if "NULL" in line:
+        return None
     m = _KV.search(line) or _RA.search(line)
     if not m:
         return None
@@ -37,6 +45,8 @@ def _demo() -> None:
         == (100.5, -5.4, 12.0)
     assert parse_line("frame 12 | RA= 100.5  DEC=  -5.4  ROLL=  12.0  (5 fps)") == (100.5, -5.4, 12.0)
     assert parse_line("frame 13 | NULL") is None
+    # Coasting lines carry a *stale* attitude and must not count as fresh estimates.
+    assert parse_line("frame 14 | t=1.0s | NULL (hold) RA= 100.5  DEC=  -5.4  ROLL=  12.0") is None
     assert parse_line("random noise") is None
     print("feed.py self-check passed")
 

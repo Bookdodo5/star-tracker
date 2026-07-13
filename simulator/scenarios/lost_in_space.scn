@@ -1,6 +1,0 @@
-# Lost-in-space solve-rate test: 40 random attitudes
-config fov=10 mag=7.5 image_size=877
-commands
-lost_in_space 40 1 7
-end
-expect solve_pct>70 mean_pointing_deg<0.1

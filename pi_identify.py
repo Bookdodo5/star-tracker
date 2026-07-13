@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Pi live star identification: Sentech GigE camera → centroid_extract → TETRA → RA/DEC/ROLL.
+Pi live star identification: Sentech GigE camera -> centroid_extract -> TETRA -> RA/DEC/ROLL.
 
-Subprocess approach — no C changes: stapipy grabs frames, this script writes PPM to
+Subprocess approach: stapipy grabs frames, this script writes PPM to
 a tmpdir, shells out to centroid_extract then demo_centroid_compare, and parses stdout.
 
 Also serves a live MJPEG preview on http://<pi-ip>:8080 (--stream, enabled by default).
@@ -10,13 +10,14 @@ Also serves a live MJPEG preview on http://<pi-ip>:8080 (--stream, enabled by de
 Usage:
     python pi_identify.py --fov 7.569
     python pi_identify.py --fov 10 --morph 0          # real night-sky point-source stars
-    python pi_identify.py --fov 10 --scale 0.5        # downscale 2× before centroiding
-    python pi_identify.py --fov 10 --fov-search       # calibrate FOV from seed, lock on first solve
+    python pi_identify.py --fov 10 --scale 0.5        # downscale 2x before centroiding
+    python pi_identify.py --fov 10 --fov-search       # calibrate FOV from seed, lock after 2 agreeing solves
     python pi_identify.py --fov 10 --no-stream        # disable MJPEG server
     python pi_identify.py --fov 10 --frames 1         # single shot
 """
 import argparse
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -34,14 +35,50 @@ IDENTIFY_BIN = os.path.join(ROOT, "identifier", "build-pi", "demo_centroid_compa
 
 # Shared state for the MJPEG server
 _latest_jpeg = [b""]
-_latest_att = [None]
 _jpeg_lock = threading.Lock()
+
+
+class _Tee:
+    """Duplicates a text stream to a log file, so everything printed to the
+    console (attitude lines, warnings) is also recorded on disk. stdout must
+    stay live because simulator/feed.py parses it -- hence tee, not redirect."""
+    def __init__(self, stream, log_file):
+        self._stream = stream
+        self._log = log_file
+
+    def write(self, text):
+        self._stream.write(text)
+        self._log.write(text)
+
+    def flush(self):
+        self._stream.flush()
+        self._log.flush()
+
+
+def _tee_output_to(log_path):
+    """Appends all stdout/stderr of this process to log_path (line-buffered)."""
+    log_file = open(log_path, "a", buffering=1, encoding="utf-8", errors="replace")
+    sys.stdout = _Tee(sys.stdout, log_file)
+    sys.stderr = _Tee(sys.stderr, log_file)
+
+
+def _set_node(nodemap, name, value, is_enum=False):
+    """Best-effort set of a camera GenICam node; warns instead of crashing on unknown nodes."""
+    try:
+        node = nodemap.get_node(name)
+        if is_enum:
+            st.PyIEnumeration(node).set_symbolic_value(str(value))
+        else:
+            st.PyIFloat(node).value = float(value)
+        print(f"[camera] {name} = {value}", flush=True)
+    except Exception as exc:  # node name differs across firmware / not writable; don't abort the run
+        print(f"[camera] could not set {name} ({exc})", flush=True)
 
 
 def _check_bins():
     missing = [b for b in (CENTROID_BIN, IDENTIFY_BIN) if not os.path.isfile(b)]
     if missing:
-        sys.exit("Missing binaries — build on Pi first:\n"
+        sys.exit("Missing binaries; build on Pi first:\n"
                  + "\n".join(f"  {b}" for b in missing))
 
 
@@ -132,10 +169,22 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
             pass
 
 
+def _lan_ip() -> str:
+    """Best-effort LAN IP of this machine (no packets sent; just picks the outbound interface)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
 def _start_mjpeg_server(port: int):
     server = HTTPServer(("0.0.0.0", port), _MJPEGHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"[stream] http://10.90.37.15:{port}")
+    print(f"[stream] http://{_lan_ip()}:{port}")
 
 
 def _parse_attitude(stdout: str):
@@ -208,7 +257,7 @@ def identify_frame_calibrate(ppm_bytes: bytes, width: int, height: int,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Sentech GigE → TETRA attitude")
+    parser = argparse.ArgumentParser(description="Sentech GigE -> TETRA attitude")
     parser.add_argument("--fov", type=float, default=10.0,
                         help="horizontal FOV in degrees (seed if --fov-search)")
     parser.add_argument("--fov-search", action="store_true",
@@ -229,7 +278,17 @@ def main():
                         help="MJPEG server port (default: 8080)")
     parser.add_argument("--snapshot", metavar="PATH",
                         help="grab one native frame, save it (+centroid overlay) to PATH, print stats, exit")
+    parser.add_argument("--exposure", type=float, metavar="US",
+                        help="fixed exposure time in microseconds (disables auto-exposure); raise to detect more stars")
+    parser.add_argument("--gain", type=float, metavar="DB",
+                        help="fixed analog gain (disables auto-gain)")
+    parser.add_argument("--log", default="run.log", metavar="PATH",
+                        help="append all console output to this file (default: run.log; '' to disable). "
+                             "Tail it live with tools/serve_log.py")
     args = parser.parse_args()
+
+    if args.log:
+        _tee_output_to(args.log)
 
     if not args.stream_only:
         _check_bins()
@@ -241,8 +300,17 @@ def main():
     st_system = st.create_system()
     st_device = st_system.create_first_device()
     print(f"Camera: {st_device.info.display_name}")
-    print(f"FOV={args.fov}°{'  fov-search=ON' if args.fov_search else ''}  "
+    print(f"FOV={args.fov} deg{'  fov-search=ON' if args.fov_search else ''}  "
           f"morph={args.morph}  scale={args.scale}  (Ctrl+C to stop)")
+
+    if args.exposure is not None or args.gain is not None:
+        nodemap = st_device.remote_port.nodemap
+        if args.exposure is not None:
+            _set_node(nodemap, "ExposureAuto", "Off", is_enum=True)
+            _set_node(nodemap, "ExposureTime", args.exposure)
+        if args.gain is not None:
+            _set_node(nodemap, "GainAuto", "Off", is_enum=True)
+            _set_node(nodemap, "Gain", args.gain)
 
     st_datastream = st_device.create_datastream()
     grab_count = args.frames if args.frames > 0 else 2**62
@@ -257,6 +325,7 @@ def main():
     fov = args.fov
     fov_locked = not args.fov_search
     calib_window = []  # (fov, att) from recent consecutive calibration successes
+    last_att = None  # most recent successful solve; held through NULL frames (real-time coasting)
 
     try:
         while st_datastream.is_grabbing:
@@ -303,11 +372,24 @@ def main():
             if not fov_locked:
                 att, found_fov = identify_frame_calibrate(ppm, w, h, fov, args.morph)
                 if att:
-                    fov = found_fov
+                    if calib_window and abs(found_fov - calib_window[-1][0]) > CALIB_AGREE_PCT * calib_window[-1][0]:
+                        calib_window.clear()
+                    calib_window.append((found_fov, att))
+                    if len(calib_window) < CALIB_CONFIRM:
+                        print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | calibrating FOV "
+                              f"({len(calib_window)}/{CALIB_CONFIRM} agree, last={found_fov:.3f} deg)   "
+                              f"({fps:.2f} fps)", flush=True)
+                        if args.stream:
+                            _update_jpeg(gray, None)
+                        continue
+                    fov = sum(candidate_fov for candidate_fov, _ in calib_window) / len(calib_window)
                     fov_locked = True
-                    print(f"[fov-search] locked FOV = {fov:.3f}°", flush=True)
+                    att = calib_window[-1][1]
+                    print(f"[fov-search] locked FOV = {fov:.3f} deg "
+                          f"(confirmed {CALIB_CONFIRM} frames)", flush=True)
                 else:
-                    print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | NULL (fov-search seed={args.fov}°)   ({fps:.2f} fps)", flush=True)
+                    calib_window.clear()
+                    print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | NULL (fov-search seed={args.fov} deg)   ({fps:.2f} fps)", flush=True)
                     if args.stream:
                         _update_jpeg(gray, None)
                     continue
@@ -318,9 +400,14 @@ def main():
                 _update_jpeg(gray, att)
 
             if att:
+                last_att = att
                 qw, qx, qy, qz = att[3]
                 print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | RA={att[0]:9.4f}  DEC={att[1]:8.4f}  "
                       f"ROLL={att[2]:8.3f}  Q=({qw:.4f},{qx:.4f},{qy:.4f},{qz:.4f})  ({fps:.2f} fps)", flush=True)
+            elif last_att is not None:
+                # no solve this frame: coast on the last attitude, marked as held (stale)
+                print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | NULL (hold) RA={last_att[0]:9.4f}  DEC={last_att[1]:8.4f}  "
+                      f"ROLL={last_att[2]:8.3f}                                  ({fps:.2f} fps)", flush=True)
             else:
                 print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | NULL                                         "
                       f"({fps:.2f} fps)", flush=True)

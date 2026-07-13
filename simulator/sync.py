@@ -1,32 +1,22 @@
 """
-Sync / calibration helpers.
+Flash visual check — a liveness / optical-round-trip sanity read.
 
-Two independent things live here:
-
-1. **Flash visual check** — a liveness / optical-round-trip sanity read. The simulator fills
-   the whole frame with R, then G, then B; a watcher on the tracker's camera-preview MJPEG
-   (`:8080`) detects each colour appearing and reports the round-trip time. This confirms the
-   loop is live and roughly how long light takes to come back. It is NOT used to set
-   ``pipeline_delay`` — the preview publishes *after* the solve in pi_identify.py, so it
-   measures a different latency than the stdout estimate stream (see comparator.estimate_delay,
-   which measures the quantity that actually needs compensating).
-
-2. **Offline accuracy report** — replays a recorded truth timeline + tracker-estimate log
-   through the (delay-compensated) Comparator and writes the same CSV + summary as a live run,
-   but after the fact and with a chosen delay.
+The simulator fills the whole frame with R, then G, then B; a watcher on the tracker's
+camera-preview MJPEG (`:8080`) detects each colour appearing and reports the round-trip
+time. This confirms the loop is live and roughly how long light takes to come back. It is
+NOT used to set ``pipeline_delay`` — the preview publishes *after* the solve in
+pi_identify.py, so it measures a different latency than the stdout estimate stream (see
+comparator.estimate_delay, which measures the quantity that actually needs compensating).
 """
 from __future__ import annotations
 
 import statistics
 import time
 import urllib.request
-from pathlib import Path
 from typing import Callable, Iterable, Optional
 
 import cv2
 import numpy as np
-
-from .comparator import Comparator, TruthTimeline
 
 
 def channel_dominant(mean_bgr, color_rgb, threshold: float = 30.0) -> bool:
@@ -86,44 +76,15 @@ def detect_flash(flash_setter: Callable, preview_url: str,
     return statistics.median(times) if times else None
 
 
-def write_accuracy_report(truth_log, estimate_log, delay: float, out_csv: Path) -> dict:
-    """
-    Offline scoring: replay a truth timeline + estimate log through the Comparator at ``delay``.
-
-    ``truth_log``: iterable of ``(t, ra, dec, roll, moving)``.
-    ``estimate_log``: iterable of ``(t_recv, (ra, dec, roll))``.
-    Writes the per-row CSV and returns the static-hold summary.
-    """
-    truth_log = list(truth_log)
-    timeline = TruthTimeline(maxlen=max(64, len(truth_log)))
-    for row in truth_log:
-        timeline.record(*row)
-    comparator = Comparator(timeline, pipeline_delay=delay, csv_path=Path(out_csv))
-    for t_recv, est in estimate_log:
-        comparator.add_estimate(t_recv, est)
-    summary = comparator.summary(static_only=True)
-    comparator.close()
-    return summary
-
-
 def _demo() -> None:
-    """Self-check: flash detection on synthetic frames (AC7); offline report matches Comparator (AC10)."""
-    # AC7: black frames then a red frame -> detected at the red frame's time.
+    """Self-check: flash detection on synthetic frames."""
+    # Black frames then a red frame -> detected at the red frame's time.
     black = (8.0, 8.0, 8.0)
     red_bgr = (8.0, 8.0, 240.0)  # BGR: high red channel
     frames = [(0.0, black), (0.1, black), (0.2, red_bgr)]
     dt = _detect_one(frames, (255, 0, 0), t_render=0.0, threshold=30.0)
     assert dt == 0.2, dt
     assert channel_dominant(red_bgr, (255, 0, 0)) and not channel_dominant(black, (255, 0, 0))
-
-    # AC10: a static hold + one close estimate -> report reproduces Comparator's numbers.
-    import tempfile, os
-    truth_log = [(0.0, 83.8, -5.4, 0.0, False)]
-    est_log = [(0.3, (83.82, -5.39, 0.1))]
-    tmp = Path(tempfile.gettempdir()) / "sim_sync_selfcheck.csv"
-    summary = write_accuracy_report(truth_log, est_log, delay=0.3, out_csv=tmp)
-    assert summary["samples"] == 1 and summary["accuracy_pct"] == 100.0, summary
-    os.remove(tmp)
     print("sync.py self-check passed")
 
 
