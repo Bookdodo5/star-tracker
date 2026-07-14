@@ -157,6 +157,12 @@ class TrackerController:
         if self._proc is not None and self._proc.poll() is None:
             return "already running"
         args = shlex.split(self._cmd)
+        # A bare "python"/"python3" leading token goes through PATH in the child, which can
+        # resolve to a *different* interpreter than the one running the simulator (shell
+        # aliases/venvs don't reach subprocess) — a common "works directly, ModuleNotFoundError
+        # when spawned" trap. Pin it to our own interpreter so the tracker inherits this env.
+        if args and Path(args[0]).stem in ("python", "python3"):
+            args[0] = sys.executable
         if fov is not None:
             args += ["--fov", str(fov)]
         if fov_search:
