@@ -94,8 +94,14 @@ def parse_commands(text: str, hr_lookup: Optional[Callable[[int], tuple[float, f
                 seed = int(parts[3]) if len(parts) > 3 else 0
                 commands.extend(_lost_in_space(n, hold_s, seed))
             elif kind == "replay":
-                col = parts[2] if len(parts) > 2 else None
-                commands.append(_load_replay(parts[1], col))
+                # extra args in any order: a number = seconds per line, a word = column prefix.
+                dt = col = None
+                for extra in parts[2:]:
+                    try:
+                        dt = float(extra)
+                    except ValueError:
+                        col = extra
+                commands.append(_load_replay(parts[1], col, dt))
             elif kind == "blank":
                 commands.append(Command("blank", {}, float(parts[1]), display_color=(8, 8, 8)))
             elif kind == "flash":
@@ -125,16 +131,19 @@ def _lost_in_space(n: int, hold_s: float, seed: int) -> list[Command]:
     return out
 
 
-def _load_replay(path_str: str, col: Optional[str]) -> Command:
+def _load_replay(path_str: str, col: Optional[str], dt: Optional[float] = None) -> Command:
     """
     Loads a CSV trajectory into a single ``replay`` command.
 
-    Columns are matched case-insensitively. The time column is the first of
-    ``t, time, timestamp, t_recv`` present (else rows are spaced 0.1 s apart). RA/DEC/ROLL
-    are ``<prefix>ra/dec/roll``: ``col`` sets the prefix explicitly (e.g. ``truth_`` or
-    ``est_``); with no ``col`` it auto-detects, trying ``""`` then ``truth_`` then ``est_``,
-    so any CSV this repo writes (simulator_run_*, lost_in_space_targets, plain ra/dec/roll)
-    just works. Times are made relative to the first sample. Rows missing an angle are skipped.
+    Columns are matched case-insensitively. RA/DEC/ROLL are ``<prefix>ra/dec/roll``: ``col``
+    sets the prefix explicitly (e.g. ``truth_`` or ``est_``); with no ``col`` it auto-detects,
+    trying ``""`` then ``truth_`` then ``est_``, so a plain ``ra,dec,roll`` CSV or any file
+    this repo writes just works.
+
+    Timing: if ``dt`` is given, every row is ``dt`` seconds apart (row i at ``i*dt``) and any
+    time column is ignored — the simple "N seconds per line" mode. Otherwise the time column
+    (first of ``t, time, timestamp, t_recv``) is used, or 0.1 s/row if there is none. Times
+    are made relative to the first sample. Rows with a non-numeric angle are skipped.
     """
     path = Path(path_str)
     if not path.exists():
@@ -160,7 +169,8 @@ def _load_replay(path_str: str, col: Optional[str]) -> Command:
     if not (ra_key and dec_key and roll_key):
         raise ValueError(f"replay CSV needs ra/dec/roll columns (tried prefixes {prefixes}); "
                          f"headers were {list(rows[0])}")
-    t_key = pick("t", "time", "timestamp", "t_recv")
+    t_key = None if dt is not None else pick("t", "time", "timestamp", "t_recv")
+    step = dt if dt is not None else 0.1
 
     samples: list[tuple[float, float, float, float]] = []
     for i, row in enumerate(rows):
@@ -168,7 +178,7 @@ def _load_replay(path_str: str, col: Optional[str]) -> Command:
             ra, dec, roll = float(row[ra_key]), float(row[dec_key]), float(row[roll_key])
         except (ValueError, TypeError):
             continue  # skip blank/NULL rows (e.g. no-solve estimates)
-        t = float(row[t_key]) if t_key and row[t_key] not in ("", None) else i * 0.1
+        t = float(row[t_key]) if t_key and row[t_key] not in ("", None) else i * step
         samples.append((t, ra, dec, roll))
     if len(samples) < 2:
         raise ValueError(f"replay needs >=2 valid rows, got {len(samples)} from {path_str}")
@@ -349,6 +359,19 @@ def _demo() -> None:
         assert parse_commands(f"replay {csv_path}")[0].kind == "replay"
     finally:
         os.unlink(csv_path)
+    # Plain ra,dec,roll CSV with no time column: dt sets seconds per line.
+    fd, plain_path = tempfile.mkstemp(suffix=".csv")
+    with os.fdopen(fd, "w", newline="") as f:
+        f.write("ra,dec,roll\n0,0,0\n10,0,0\n20,0,0\n")  # 3 rows
+    try:
+        cmd = parse_commands(f"replay {plain_path} 0.5")[0]   # 0.5 s/line -> total 1.0 s
+        assert cmd.kind == "replay" and abs(cmd.duration - 1.0) < 1e-9, cmd.duration
+        rr = Resolver([cmd], (0.0, 0.0, 0.0))
+        rr.attitude(0.0)
+        (ra, _, _), moving = rr.attitude(0.75)   # 3/4 through: between rows 1(10) and 2(20) -> 15
+        assert abs(ra - 15.0) < 1e-6 and moving, ra
+    finally:
+        os.unlink(plain_path)
     print("commands.py self-check passed")
 
 
