@@ -16,6 +16,12 @@ extern "C" {
 #include "identify_tetra.h"
 }
 
+#ifdef _WIN32
+#define STAR_LIVE_EXPORT __declspec(dllexport)
+#else
+#define STAR_LIVE_EXPORT __attribute__((visibility("default")))
+#endif
+
 /** Centroid detector, compiled from Centroid/centroid_extract.cpp (C linkage). */
 extern "C" void extract_centroids(const uint8_t *rgb_in, uint8_t *dog_out, uint8_t *morph_out,
                                   // morph_passes appended at end; see centroid_extract.cpp
@@ -95,7 +101,7 @@ static void rotation_to_quaternion(const float m[3][3], double *qw, double *qx, 
  * centroids out. Returns the number written (capped at max_out). Same detector the
  * identify_* entry points use, so the overlay shows exactly what the solver sees.
  */
-extern "C" __declspec(dllexport)
+extern "C" STAR_LIVE_EXPORT
 int detect_centroids(const uint8_t *rgb, int width, int height, int morph_passes,
                      uint16_t *out_x, uint16_t *out_y, int max_out) {
     if (width <= 0 || height <= 0 || width * height > LIVE_MAX_PIXELS) return 0;
@@ -122,7 +128,7 @@ int detect_centroids(const uint8_t *rgb, int width, int height, int morph_passes
  * known attitudes and checks the solve. Vectors must be brightest-first (xyz triples).
  * Returns 1 and fills RA/DEC/roll/quaternion(w,x,y,z) on a solve, 0 otherwise.
  */
-extern "C" __declspec(dllexport)
+extern "C" STAR_LIVE_EXPORT
 int identify_vectors(const float *xyz, int n, double *out_ra, double *out_dec, double *out_roll,
                      double *out_qw, double *out_qx, double *out_qy, double *out_qz) {
     if (n < 4) return 0;
@@ -148,7 +154,7 @@ int identify_vectors(const float *xyz, int n, double *out_ra, double *out_dec, d
  * open), 0 = camera (skip the open so 1-2 px stars survive), N = repeat. See
  * extract_centroids in centroid_extract.cpp.
  */
-extern "C" __declspec(dllexport)
+extern "C" STAR_LIVE_EXPORT
 int identify_frame(const uint8_t *rgb, int width, int height, float fov_deg,
                    double *out_ra, double *out_dec, double *out_roll,
                    double *out_qw, double *out_qx, double *out_qy, double *out_qz, int morph_passes) {
@@ -189,7 +195,7 @@ int identify_frame(const uint8_t *rgb, int width, int height, float fov_deg,
  * identify_frame (cheap) on every later frame. Returns 1 on solve, 0 if none, -2 if the
  * frame is too large. Bootstrap-only: more expensive than identify_frame.
  */
-extern "C" __declspec(dllexport)
+extern "C" STAR_LIVE_EXPORT
 int identify_frame_calibrate(const uint8_t *rgb, int width, int height, float seed_fov_deg,
                              double *out_ra, double *out_dec, double *out_roll,
                              double *out_qw, double *out_qx, double *out_qy, double *out_qz,
