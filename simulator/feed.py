@@ -5,7 +5,7 @@ The tracker is left completely unchanged — we just read the lines it already p
 pull an ``(ra, dec, roll)`` out of them. Two formats are recognised, covering every
 existing driver in this repo:
 
-    ``... attitude_ra_deg=123.4 attitude_dec_deg=-5.6 attitude_roll_deg=7.8 ...``  (demo_centroid_compare)
+    ``... attitude_ra_deg=123.4 attitude_dec_deg=-5.6 attitude_roll_deg=7.8 ...``  (identify_from_centroids)
     ``... RA=123.4  DEC=-5.6  ROLL=7.8 ...``                                       (pi_identify / identify)
 
 Usage: pipe the tracker into the simulator, e.g.

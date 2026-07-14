@@ -320,27 +320,38 @@ def anchored_allcombos_tetrads(
     chord_gather = 2.0 * math.sin(gather_rad / 2.0)
     max_chord = 2.0 * math.sin(max_edge_rad / 2.0)
     out: list[tuple[int, int, int, int]] = []
+    # Cache the local trio-index arrays per neighbour-count so combinations() runs once per size,
+    # not once per anchor (there are only a handful of distinct sizes).
+    trio_index_cache: dict[int, np.ndarray] = {}
 
     for a in range(n_anchors):
         all_nb = sorted(j for j in tree.query_ball_point(vecs[a], chord_gather) if j > a)
         k = (k_low if (density_thresh is not None and k_low is not None
                        and len(all_nb) > density_thresh) else max_neighbours)
         nb = all_nb[:k]
-        if len(nb) < 3:
+        m = len(nb)
+        if m < 3:
             continue
-        for trio in itertools.combinations(nb, 3):
-            combo = (a, *trio)
-            pts = vecs[list(combo)]
-            ok = True
-            for u in range(4):
-                for v in range(u + 1, 4):
-                    if np.linalg.norm(pts[u] - pts[v]) > max_chord:
-                        ok = False
-                        break
-                if not ok:
-                    break
-            if ok:
-                out.append(combo)
+        # Vectorized max-edge test: precompute the anchor->neighbour and neighbour->neighbour chord
+        # distances once, then evaluate every (anchor + trio) at once. Same combos, same order as
+        # itertools.combinations(nb, 3), so the emitted tetrad list is byte-identical to the scalar
+        # version -- just far fewer Python-level numpy calls.
+        pts = vecs[nb]                                      # (m, 3)
+        anchor_dist = np.linalg.norm(pts - vecs[a], axis=1)  # (m,) anchor->neighbour
+        nb_dist = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=2)  # (m, m) neighbour->neighbour
+        trios = trio_index_cache.get(m)
+        if trios is None:
+            trios = np.fromiter(itertools.chain.from_iterable(itertools.combinations(range(m), 3)),
+                                dtype=np.intp).reshape(-1, 3)
+            trio_index_cache[m] = trios
+        i, j, l = trios[:, 0], trios[:, 1], trios[:, 2]
+        max_edge = np.maximum.reduce([
+            anchor_dist[i], anchor_dist[j], anchor_dist[l],
+            nb_dist[i, j], nb_dist[i, l], nb_dist[j, l],
+        ])                                                  # (T,) largest of the 6 pairwise edges
+        for t in np.nonzero(max_edge <= max_chord)[0]:      # ascending -> same order as before
+            trio = trios[t]
+            out.append((a, nb[trio[0]], nb[trio[1]], nb[trio[2]]))
     return out
 
 

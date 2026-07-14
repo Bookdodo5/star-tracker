@@ -35,7 +35,12 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent
-DLL = ROOT / "live" / "build-mingw" / "libstar_live.dll"
+_LIB_CANDIDATES = [
+    ROOT / "live" / "build-mingw" / "libstar_live.dll",   # Windows (MinGW)
+    ROOT / "live" / "build-pi" / "libstar_live.so",       # Raspberry Pi
+    ROOT / "live" / "build" / "libstar_live.so",          # generic Linux
+]
+DLL = next((p for p in _LIB_CANDIDATES if p.exists()), _LIB_CANDIDATES[0])
 
 
 class _Tee:
@@ -62,12 +67,40 @@ def _tee_output_to(log_path):
     sys.stderr = _Tee(sys.stderr, log_file)
 
 
+DB_META = ROOT / "identifier" / "generated" / "db_meta.json"
+
+
+def warn_fov_mismatch(fov):
+    """Prints one warning if --fov disagrees with the FOV the baked DB was built for.
+
+    The identifier only matches tetrads whose angular scale fits the DB's FOV, so a large
+    mismatch is the usual cause of constant NULL. Reads identifier/generated/db_meta.json
+    (written by export_tetra_db.py / db_center.py). Warning only -- fov-search and oversized
+    fields can still solve, so it never blocks.
+    """
+    import json
+    try:
+        meta = json.loads(DB_META.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print(f"[db] note: no db_meta.json; cannot check --fov {fov} against the baked DB.")
+        return
+    db_w = meta.get("fov_w")
+    if not db_w:
+        return
+    if abs(fov - db_w) > 0.25 * db_w:
+        print(f"[db] WARNING: DB built for {db_w}x{meta.get('fov_h')} deg but --fov {fov} given. "
+              f"Rebuild for this camera: python db_center.py build --fov-w {fov} --fov-h {fov*meta.get('fov_h', db_w)/db_w:.1f}")
+
+
 def load_lib():
-    """Loads star_live.dll and declares the identify_frame signature."""
+    """Loads the star_live shared library (first existing platform build) and declares signatures."""
     if not DLL.exists():
-        sys.exit(f"Missing {DLL} -- build it:\n"
-                 "  cmake -S live -B live/build-mingw -G \"MinGW Makefiles\" -DCMAKE_BUILD_TYPE=Release\n"
-                 "  cmake --build live/build-mingw")
+        sys.exit("Missing star_live library (looked for: "
+                 + ", ".join(str(p) for p in _LIB_CANDIDATES) + ") -- build it:\n"
+                 "  Windows: cmake -S live -B live/build-mingw -G \"MinGW Makefiles\" -DCMAKE_BUILD_TYPE=Release\n"
+                 "           cmake --build live/build-mingw\n"
+                 "  Pi:      cmake -S live -B live/build-pi -DCMAKE_BUILD_TYPE=Release\n"
+                 "           cmake --build live/build-pi")
     lib = ctypes.CDLL(str(DLL))
     D = ctypes.POINTER(ctypes.c_double)
     lib.identify_frame.restype = ctypes.c_int
@@ -282,6 +315,8 @@ def main():
         return
 
     lib = load_lib()
+    if not args.fov_search:  # fov-search deliberately starts from an off seed, so skip the check
+        warn_fov_mismatch(args.fov)
     cap = None
     if args.source == "screen":
         region = tuple(int(v) for v in args.region.split(",")) if args.region else None

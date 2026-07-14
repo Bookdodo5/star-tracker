@@ -15,16 +15,20 @@ Why this beats the old anchor+cap=100 scheme:
 from __future__ import annotations
 
 import itertools
+import json
 import math
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 GENERATED_TETRA_SOURCE = ROOT / "identifier" / "generated" / "tetra_db_generated.c"
+GENERATED_CATALOG_SOURCE = ROOT / "identifier" / "generated" / "catalog_db_generated.c"
+DB_META = ROOT / "identifier" / "generated" / "db_meta.json"
 
 # Anchored all-combinations generation (each tetra is owned by its BRIGHTEST star = anchor):
 #   - anchors: stars brighter than BMC (so even sparse fields, whose brightest is faint, get one).
@@ -136,6 +140,39 @@ def main() -> None:
         f.write("};\n")
 
     print(GENERATED_TETRA_SOURCE)
+
+    _write_db_meta(len(tetra_rows), len(kd_nodes), len(member_vecs), n_anchors)
+
+
+def _write_db_meta(tetrads: int, kd_nodes: int, members: int, anchors: int) -> None:
+    """
+    Records the exact knobs this DB was built with, so drivers and the DB command center
+    can report the DB's FOV and warn on a `--fov` mismatch without parsing C source. Any
+    regen path (this exporter, sweep_db, db_center) refreshes it, so it never goes stale.
+    Baked bytes are filled in if the generated .c files already exist on disk.
+    """
+    meta = {
+        "fov_w": FOV_W,
+        "fov_h": FOV_H,
+        "mag": MAG_LIMIT,
+        "bmc": BMC,
+        "radius_deg": math.degrees(GATHER_RAD),
+        "max_edge_deg": FOV_DIAG_DEG,
+        "k": MAX_FIELD_STARS,
+        "density_thresh": DENSITY_THRESH,
+        "k_low": K_LOW,
+        "members": members,
+        "anchors": anchors,
+        "tetrads": tetrads,
+        "kd_nodes": kd_nodes,
+        "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "evals": [],
+    }
+    tetra_bytes = GENERATED_TETRA_SOURCE.stat().st_size if GENERATED_TETRA_SOURCE.exists() else 0
+    catalog_bytes = GENERATED_CATALOG_SOURCE.stat().st_size if GENERATED_CATALOG_SOURCE.exists() else 0
+    meta["db_bytes"] = tetra_bytes + catalog_bytes
+    DB_META.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    print(f"  wrote {DB_META.name}: FOV {FOV_W}x{FOV_H} deg, {tetrads} tetrads, {meta['db_bytes']/1e6:.2f} MB")
 
 
 if __name__ == "__main__":

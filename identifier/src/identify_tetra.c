@@ -374,6 +374,43 @@ static bool estimate_focal_ratio(
 /**
  * Identifies a field whose seed FOV may be far from the true FOV (see header).
  */
+
+/**
+ * Verifies one candidate tetrad↔node correspondence GLOBALLY, at an already-rescaled star set.
+ *
+ * The outer calibrate loop already has a candidate rotation source (solve_attitude_triad over the
+ * 4 tetrad stars). estimate_focal_ratio forces the tetrad's *shape* to match the node, so a local
+ * shape check can't tell a true FOV from a coincidental one — only the full-frame fit can. So for
+ * each of the 24 HR permutations that yields a plausible rotation, run verify_attitude ONCE (the
+ * cheap O(log N) KD inlier count across ALL stars). This is what actually discriminates the true
+ * FOV, and it is ~1000x cheaper than the old per-candidate full identify_tetra (which re-looped
+ * every tetrad). Keeps the best verified MatchResult in *out; returns true if any verified.
+ */
+static bool verify_candidate_global(const ObservedStar *rescaled, uint8_t star_count,
+                                    const uint8_t observed_ids[4], const uint16_t node_hr[4],
+                                    MatchResult *out) {
+    bool any = false;
+    for (uint8_t permutation_index = 0; permutation_index < 24; ++permutation_index) {
+        uint16_t mapped_hr_ids[4] = {
+            node_hr[TETRA_PERMUTATIONS[permutation_index][0]],
+            node_hr[TETRA_PERMUTATIONS[permutation_index][1]],
+            node_hr[TETRA_PERMUTATIONS[permutation_index][2]],
+            node_hr[TETRA_PERMUTATIONS[permutation_index][3]],
+        };
+        Mat3f rotation;
+        if (!solve_attitude_triad(mapped_hr_ids, observed_ids, 4, rescaled, &rotation) ||
+            !pattern_residual_is_small(&rotation, mapped_hr_ids, observed_ids, rescaled)) {
+            continue;
+        }
+        MatchResult attempt;
+        if (verify_attitude(&rotation, rescaled, star_count, &attempt) && attempt.success) {
+            keep_better(out, &attempt);
+            any = true;
+        }
+    }
+    return any;
+}
+
 bool identify_tetra_calibrate(const ObservedStar *observed_stars, uint8_t observed_star_count, MatchResult *result) {
     memset(result, 0, sizeof(*result));
     result->focal_scale = 1.0f;
@@ -386,9 +423,12 @@ bool identify_tetra_calibrate(const ObservedStar *observed_stars, uint8_t observ
     bool found_best = false;
     memset(&best, 0, sizeof(best));
 
-    /* ponytail: O(C(query,4) * candidates) full re-identifies; bootstrap only runs until FOV locks.
-       Keep the best verified candidate instead of the first one, because false FOVs can pass a
-       weak early tetrad before the real FOV candidate is reached. */
+    /* For every observed tetrad and its top-K feature candidates, estimate the focal ratio, rescale
+       once, and verify the candidate rotation GLOBALLY (verify_candidate_global — a cheap KD inlier
+       count, not a full re-identify). Keep the best verified result, not the first: a false FOV can
+       pass a weak early tetrad before the real FOV candidate is reached. The old code ran a full
+       identify_tetra per candidate (~0.3s each), so the budget never reached the correct one; the
+       global verify is ~1000x cheaper, so the whole search now finishes well inside the budget. */
     for (uint8_t first = 0; first < query_star_count - 3; ++first) {
         for (uint8_t second = first + 1; second < query_star_count - 2; ++second) {
             for (uint8_t third = second + 1; third < query_star_count - 1; ++third) {
@@ -418,7 +458,8 @@ bool identify_tetra_calibrate(const ObservedStar *observed_stars, uint8_t observ
                             rescaled[star_index] = rescale_observed(observed_stars[star_index], ratio);
                         }
                         MatchResult attempt;
-                        if (identify_tetra(rescaled, observed_star_count, &attempt) && attempt.success) {
+                        memset(&attempt, 0, sizeof(attempt));
+                        if (verify_candidate_global(rescaled, observed_star_count, observed_ids, node->hr, &attempt)) {
                             attempt.focal_scale = ratio;
                             if (!found_best || attempt.score > best.score) {
                                 best = attempt;

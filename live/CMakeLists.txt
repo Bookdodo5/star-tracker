@@ -26,4 +26,7 @@ target_include_directories(star_live PRIVATE ${ID}/include)
 target_link_libraries(star_live PRIVATE m)
 
 # Embed the MinGW runtime so ctypes can load the DLL without MinGW on PATH.
-target_link_options(star_live PRIVATE -static -static-libgcc -static-libstdc++)
+# (Windows only: -static on Linux would try to make a fully static .so and fail.)
+if(WIN32)
+    target_link_options(star_live PRIVATE -static -static-libgcc -static-libstdc++)
+endif()

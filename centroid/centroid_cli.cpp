@@ -3,7 +3,7 @@
 // Reconstructed entry point: the original centroid_cli.cpp was an untracked file
 // lost when the build configuration was deleted. It reads a binary PPM (P6),
 // runs extract_centroids(), and writes the index,x,y,brightness CSV that the
-// identifier (read_centroid_csv in demo_centroid_compare.c) consumes.
+// identifier (read_centroid_csv in identify_from_centroids.c) consumes.
 //
 // Usage: centroid_extract <in.ppm> <out.csv> [morph_passes=1]
 //   morph_passes: 0 for real night-sky frames (1-2 px stars), 1 for satellite

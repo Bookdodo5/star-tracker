@@ -35,8 +35,8 @@ add_library(star_identifier_generated
 target_include_directories(star_identifier_generated PUBLIC include)
 target_link_libraries(star_identifier_generated PUBLIC m)
 
-add_executable(demo_centroid_compare src/demo_centroid_compare.c)
-target_link_libraries(demo_centroid_compare PRIVATE star_identifier_generated)
+add_executable(identify_from_centroids src/identify_from_centroids.c)
+target_link_libraries(identify_from_centroids PRIVATE star_identifier_generated)
 
 add_executable(batch_synthetic_compare src/batch_synthetic_compare.c)
 target_link_libraries(batch_synthetic_compare PRIVATE star_identifier_generated)

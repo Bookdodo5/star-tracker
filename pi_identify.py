@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-Pi live star identification: Sentech GigE camera -> centroid_extract -> TETRA -> RA/DEC/ROLL.
+Pi live star identification: Sentech GigE camera -> in-process centroid+TETRA -> RA/DEC/ROLL.
 
-Subprocess approach: stapipy grabs frames, this script writes PPM to
-a tmpdir, shells out to centroid_extract then demo_centroid_compare, and parses stdout.
+In-process approach: stapipy grabs frames; the whole centroid -> TETRA chain runs inside
+this process via the star_live shared library (loaded once through live_identify.py — the
+same solver the PC driver uses). No PPM temp files, no subprocess spawns: ~30 ms/solve
+instead of seconds, which is what makes real-time HIL detumble rates possible. Build once
+on the Pi:
+
+    cmake -S live -B live/build-pi -DCMAKE_BUILD_TYPE=Release
+    cmake --build live/build-pi
 
 Also serves a live MJPEG preview on http://<pi-ip>:8080 (--stream, enabled by default).
 
@@ -16,22 +22,19 @@ Usage:
     python pi_identify.py --fov 10 --frames 1         # single shot
 """
 import argparse
-import os
+import ctypes
 import socket
-import subprocess
 import sys
-import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import cv2
 import numpy as np
-import stapipy as st
 
-ROOT = os.path.expanduser("~/src/star-tracker")
-CENTROID_BIN = os.path.join(ROOT, "centroid", "build-pi", "centroid_extract")
-IDENTIFY_BIN = os.path.join(ROOT, "identifier", "build-pi", "demo_centroid_compare")
+import live_identify as L  # shared in-process solver: load_lib / solve / calibrate_fov
+
+st = None  # stapipy, imported in main() so the helpers stay importable off-Pi (tests/CI)
 
 # Shared state for the MJPEG server
 _latest_jpeg = [b""]
@@ -75,13 +78,6 @@ def _set_node(nodemap, name, value, is_enum=False):
         print(f"[camera] could not set {name} ({exc})", flush=True)
 
 
-def _check_bins():
-    missing = [b for b in (CENTROID_BIN, IDENTIFY_BIN) if not os.path.isfile(b)]
-    if missing:
-        sys.exit("Missing binaries; build on Pi first:\n"
-                 + "\n".join(f"  {b}" for b in missing))
-
-
 def _resize_gray(gray: np.ndarray, scale: float) -> np.ndarray:
     return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
@@ -100,12 +96,6 @@ def _to_gray(data: bytes, pfi, width: int, height: int) -> np.ndarray:
     return q.repeat(2, axis=0).repeat(2, axis=1)[:height, :width]
 
 
-def _gray_to_ppm(gray: np.ndarray) -> tuple:
-    h, w = gray.shape
-    rgb = np.stack([gray, gray, gray], axis=-1)
-    return f"P6\n{w} {h}\n255\n".encode() + rgb.tobytes(), w, h
-
-
 def _update_jpeg(gray: np.ndarray, att):
     """Encode frame + attitude overlay as JPEG for the MJPEG stream."""
     small = cv2.resize(gray, (812, 618))
@@ -121,28 +111,35 @@ def _update_jpeg(gray: np.ndarray, att):
         _latest_jpeg[0] = jpg.tobytes()
 
 
-def _save_snapshot(path: str, gray: np.ndarray, ppm_bytes: bytes, w: int, h: int, morph: int):
+def _detect_centroids(lib, gray: np.ndarray, morph: int):
+    """Runs the DLL's own centroid detector (the same one the solver uses); returns [(x, y)]."""
+    rgb = np.ascontiguousarray(np.stack([gray, gray, gray], axis=-1))
+    h, w = gray.shape
+    lib.detect_centroids.restype = ctypes.c_int
+    lib.detect_centroids.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_int, ctypes.c_int,
+                                     ctypes.c_int, ctypes.POINTER(ctypes.c_uint16),
+                                     ctypes.POINTER(ctypes.c_uint16), ctypes.c_int]
+    out_x = (ctypes.c_uint16 * 64)()
+    out_y = (ctypes.c_uint16 * 64)()
+    n = lib.detect_centroids(rgb.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), w, h, morph,
+                             out_x, out_y, 64)
+    return [(out_x[i], out_y[i]) for i in range(n)]
+
+
+def _save_snapshot(path: str, gray: np.ndarray, lib, morph: int):
     """Save one native frame + a centroid overlay and print diagnostics (brightness, star count)."""
+    h, w = gray.shape
     cv2.imwrite(path, gray)
     print(f"[snapshot] saved {path}  size={w}x{h}  "
           f"min={int(gray.min())} max={int(gray.max())} mean={gray.mean():.1f}", flush=True)
-    with tempfile.TemporaryDirectory() as tmp:
-        csv = _centroid(ppm_bytes, morph, tmp)
-        if csv is None:
-            print("[snapshot] centroid extractor failed", flush=True)
-            return
-        rows = [r.split(",") for r in open(csv).read().splitlines()[1:] if r.strip()]
-        print(f"[snapshot] centroids found: {len(rows)}", flush=True)
-        overlay = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        for r in rows:
-            try:
-                cx, cy = float(r[0]), float(r[1])
-            except (IndexError, ValueError):
-                continue
-            cv2.circle(overlay, (int(cx), int(cy)), 12, (0, 255, 0), 2)
-        over_path = path.rsplit(".", 1)[0] + "_centroids.png"
-        cv2.imwrite(over_path, overlay)
-        print(f"[snapshot] overlay saved {over_path}", flush=True)
+    centroids = _detect_centroids(lib, gray, morph)
+    print(f"[snapshot] centroids found: {len(centroids)}", flush=True)
+    overlay = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    for cx, cy in centroids:
+        cv2.circle(overlay, (int(cx), int(cy)), 12, (0, 255, 0), 2)
+    over_path = path.rsplit(".", 1)[0] + "_centroids.png"
+    cv2.imwrite(over_path, overlay)
+    print(f"[snapshot] overlay saved {over_path}", flush=True)
 
 
 def _update_jpeg_raw(gray: np.ndarray):
@@ -187,75 +184,6 @@ def _start_mjpeg_server(port: int):
     print(f"[stream] http://{_lan_ip()}:{port}")
 
 
-def _parse_attitude(stdout: str):
-    kv = {}
-    for line in stdout.splitlines():
-        if "attitude_ra_deg=" in line or "attitude_qw=" in line:
-            kv.update(tok.split("=") for tok in line.split() if "=" in tok)
-    if "attitude_ra_deg" not in kv:
-        return None
-    try:
-        return (float(kv["attitude_ra_deg"]),
-                float(kv["attitude_dec_deg"]),
-                float(kv["attitude_roll_deg"]),
-                (float(kv["attitude_qw"]), float(kv["attitude_qx"]),
-                 float(kv["attitude_qy"]), float(kv["attitude_qz"])))
-    except (KeyError, ValueError):
-        return None
-
-
-def _parse_calibrated_fov(stdout: str):
-    for line in stdout.splitlines():
-        if "calibrated_fov_deg=" in line:
-            try:
-                kv = dict(tok.split("=") for tok in line.split() if "=" in tok)
-                return float(kv["calibrated_fov_deg"])
-            except (KeyError, ValueError):
-                pass
-    return None
-
-
-def _run_identify(csv_path: str, width: int, height: int, fov: float, calibrate: bool = False):
-    cmd = [IDENTIFY_BIN]
-    if calibrate:
-        cmd.append("--calibrate")
-    cmd += [csv_path, str(width), str(height), str(fov)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    att = _parse_attitude(r.stdout)
-    if calibrate:
-        return att, _parse_calibrated_fov(r.stdout)
-    return att
-
-
-def _centroid(ppm_bytes: bytes, morph: int, tmp: str):
-    ppm = os.path.join(tmp, "frame.ppm")
-    csv = os.path.join(tmp, "stars.csv")
-    with open(ppm, "wb") as f:
-        f.write(ppm_bytes)
-    r = subprocess.run([CENTROID_BIN, ppm, csv, str(morph)], capture_output=True)
-    if r.returncode != 0:
-        print("[centroid]", r.stderr.decode(errors="replace").strip(), file=sys.stderr)
-        return None
-    return csv
-
-
-def identify_frame(ppm_bytes: bytes, width: int, height: int, fov: float, morph: int):
-    with tempfile.TemporaryDirectory() as tmp:
-        csv = _centroid(ppm_bytes, morph, tmp)
-        if csv is None:
-            return None
-        return _run_identify(csv, width, height, fov)
-
-
-def identify_frame_calibrate(ppm_bytes: bytes, width: int, height: int,
-                              seed_fov: float, morph: int):
-    with tempfile.TemporaryDirectory() as tmp:
-        csv = _centroid(ppm_bytes, morph, tmp)
-        if csv is None:
-            return None, None
-        return _run_identify(csv, width, height, seed_fov, calibrate=True)
-
-
 def main():
     parser = argparse.ArgumentParser(description="Sentech GigE -> TETRA attitude")
     parser.add_argument("--fov", type=float, default=10.0,
@@ -290,18 +218,23 @@ def main():
     if args.log:
         _tee_output_to(args.log)
 
+    lib = None
     if not args.stream_only:
-        _check_bins()
+        lib = L.load_lib()   # exits with build instructions if the .so is missing
 
     if args.stream or args.stream_only:
         _start_mjpeg_server(args.port)
 
+    global st
+    import stapipy as st
     st.initialize()
     st_system = st.create_system()
     st_device = st_system.create_first_device()
     print(f"Camera: {st_device.info.display_name}")
     print(f"FOV={args.fov} deg{'  fov-search=ON' if args.fov_search else ''}  "
           f"morph={args.morph}  scale={args.scale}  (Ctrl+C to stop)")
+    if not args.fov_search:
+        L.warn_fov_mismatch(args.fov)
 
     if args.exposure is not None or args.gain is not None:
         nodemap = st_device.remote_port.nodemap
@@ -363,14 +296,15 @@ def main():
                     print(f"frame {frame_i:4d} | t={elapsed:7.2f}s | stream-only ({fps:.1f} fps)", flush=True)
                 continue
 
-            ppm, w, h = _gray_to_ppm(gray)
-
             if args.snapshot:
-                _save_snapshot(args.snapshot, gray, ppm, w, h, args.morph)
+                _save_snapshot(args.snapshot, gray, lib, args.morph)
                 break
 
+            # The solver takes an RGB frame; the camera is mono, so replicate the channel.
+            bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
             if not fov_locked:
-                att, found_fov = identify_frame_calibrate(ppm, w, h, fov, args.morph)
+                found_fov, att = L.calibrate_fov(lib, bgr, fov, args.morph)
                 if att:
                     if calib_window and abs(found_fov - calib_window[-1][0]) > CALIB_AGREE_PCT * calib_window[-1][0]:
                         calib_window.clear()
@@ -394,7 +328,7 @@ def main():
                         _update_jpeg(gray, None)
                     continue
             else:
-                att = identify_frame(ppm, w, h, fov, args.morph)
+                att = L.solve(lib, bgr, fov, args.morph)
 
             if args.stream:
                 _update_jpeg(gray, att)

@@ -167,7 +167,10 @@ class Renderer:
     def render(self, ra: float, dec: float, roll: float = 0.0,
                roll_sign: float = 1.0, config: dict | None = None) -> bytes:
         """Renders the field at ``(ra, dec, roll)`` with ``config`` and returns JPEG bytes."""
-        config = config or dict(DEFAULT_CONFIG)
+        # With no config, render at the constructor's FOV — NOT DEFAULT_CONFIG's fixed 10°, which
+        # would silently ignore Renderer(fov_deg=…) and render every field at 10°. The live path
+        # always passes an explicit config (seeded from --fov), so this only affects direct calls.
+        config = config or dict(DEFAULT_CONFIG, fov_deg=self.fov_deg)
         fov = config.get("fov_deg", self.fov_deg)
         img = np.full((self.image_size, self.image_size, 3), 8, np.uint8)
         xs, ys, mags = self._project(ra, dec, roll_sign * roll, fov)

@@ -33,7 +33,7 @@ static float wrap360(float angle) {
     return angle;
 }
 
-/** Builds a pinhole camera from image size and horizontal FOV (same as demo_centroid_compare). */
+/** Builds a pinhole camera from image size and horizontal FOV (same as identify_from_centroids). */
 static CameraModel camera_from_fov(int width, int height, float fov_deg) {
     float fov_rad = fov_deg * 3.14159265358979323846f / 180.0f;
     float focal = ((float)width * 0.5f) / tanf(fov_rad * 0.5f);

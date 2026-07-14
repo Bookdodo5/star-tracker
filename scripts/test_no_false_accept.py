@@ -185,7 +185,8 @@ def suite_fov_search(lib, rng, n, true_fovs, seeds):
         print(f"      fov={f}: locked={lk} wrong_fov_only={wf} wrong_point={wp}", flush=True)
     # The hard requirement is: never accept a WRONG attitude. wrong_fov_only is reported but
     # gated separately so off-design scale aliases don't mask a wrong-sky regression.
-    ok = wrong_point == 0
+    # locked > 0 is required so a totally broken calibrate (never locks) can't pass vacuously.
+    ok = wrong_point == 0 and locked > 0
     print(f"  [4] fov-search  : attempts={attempts} locked={locked} wrong_fov_only={wrong_fov_only} "
           f"WRONG_POINT={wrong_point}  -> {'PASS' if ok else 'FAIL'}", flush=True)
     return ok
