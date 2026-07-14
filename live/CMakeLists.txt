@@ -11,7 +11,7 @@ set(ID ${CMAKE_CURRENT_SOURCE_DIR}/../identifier)
 # TETRA identifier + baked databases (C). Loaded once by Python via ctypes.
 add_library(star_live SHARED
     live_identify.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Centroid/centroid_extract.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../centroid/centroid_extract.cpp
     ${ID}/src/attitude.c
     ${ID}/src/camera_model.c
     ${ID}/src/catalog_db.c
