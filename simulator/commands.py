@@ -15,6 +15,7 @@ Commands (parsed from a text file or REPL, one per line, ``#`` comments allowed)
     roll <rate> <seconds|forever>  spin about boresight at rate deg/s
     tumble <ra/s> <dec/s> <roll/s> [seconds|forever]   3-axis constant-rate tumble
     lost_in_space <n> <hold_s> [seed]  jump to n random attitudes, hold each (solve-rate test)
+    replay <file.csv> [col]        play back a recorded RA/DEC/ROLL trajectory from a CSV
     blank <seconds>                dark frame (no stars) — dark-frame / no-signal test
     flash <r> <g> <b> <seconds>    solid RGB frame — scripted marker / liveness
 
@@ -22,9 +23,11 @@ New motion types are added by writing one more parse branch + `_eval` case — n
 """
 from __future__ import annotations
 
+import csv
 import math
 import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 
@@ -90,6 +93,9 @@ def parse_commands(text: str, hr_lookup: Optional[Callable[[int], tuple[float, f
                 n, hold_s = int(parts[1]), float(parts[2])
                 seed = int(parts[3]) if len(parts) > 3 else 0
                 commands.extend(_lost_in_space(n, hold_s, seed))
+            elif kind == "replay":
+                col = parts[2] if len(parts) > 2 else None
+                commands.append(_load_replay(parts[1], col))
             elif kind == "blank":
                 commands.append(Command("blank", {}, float(parts[1]), display_color=(8, 8, 8)))
             elif kind == "flash":
@@ -117,6 +123,65 @@ def _lost_in_space(n: int, hold_s: float, seed: int) -> list[Command]:
         out.append(Command("point_at", {"ra": ra, "dec": dec, "roll": roll}, 0.0))
         out.append(Command("hold", {}, hold_s))
     return out
+
+
+def _load_replay(path_str: str, col: Optional[str]) -> Command:
+    """
+    Loads a CSV trajectory into a single ``replay`` command.
+
+    Columns are matched case-insensitively. The time column is the first of
+    ``t, time, timestamp, t_recv`` present (else rows are spaced 0.1 s apart). RA/DEC/ROLL
+    are ``<prefix>ra/dec/roll``: ``col`` sets the prefix explicitly (e.g. ``truth_`` or
+    ``est_``); with no ``col`` it auto-detects, trying ``""`` then ``truth_`` then ``est_``,
+    so any CSV this repo writes (simulator_run_*, lost_in_space_targets, plain ra/dec/roll)
+    just works. Times are made relative to the first sample. Rows missing an angle are skipped.
+    """
+    path = Path(path_str)
+    if not path.exists():
+        raise ValueError(f"replay file not found: {path_str}")
+    with open(path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        raise ValueError(f"replay file has no rows: {path_str}")
+    lower = {k.lower(): k for k in rows[0]}  # header lookup, case-insensitive
+
+    def pick(*names):
+        for n in names:
+            if n in lower:
+                return lower[n]
+        return None
+
+    prefixes = [col] if col else ["", "truth_", "est_"]
+    ra_key = dec_key = roll_key = None
+    for pre in prefixes:
+        ra_key = pick(f"{pre}ra"); dec_key = pick(f"{pre}dec"); roll_key = pick(f"{pre}roll")
+        if ra_key and dec_key and roll_key:
+            break
+    if not (ra_key and dec_key and roll_key):
+        raise ValueError(f"replay CSV needs ra/dec/roll columns (tried prefixes {prefixes}); "
+                         f"headers were {list(rows[0])}")
+    t_key = pick("t", "time", "timestamp", "t_recv")
+
+    samples: list[tuple[float, float, float, float]] = []
+    for i, row in enumerate(rows):
+        try:
+            ra, dec, roll = float(row[ra_key]), float(row[dec_key]), float(row[roll_key])
+        except (ValueError, TypeError):
+            continue  # skip blank/NULL rows (e.g. no-solve estimates)
+        t = float(row[t_key]) if t_key and row[t_key] not in ("", None) else i * 0.1
+        samples.append((t, ra, dec, roll))
+    if len(samples) < 2:
+        raise ValueError(f"replay needs >=2 valid rows, got {len(samples)} from {path_str}")
+    samples.sort(key=lambda s: s[0])
+    t0 = samples[0][0]
+    samples = [(t - t0, ra, dec, roll) for (t, ra, dec, roll) in samples]
+    return Command("replay", {"samples": samples}, samples[-1][0])
+
+
+def _lerp_angle(a: float, b: float, f: float) -> float:
+    """Interpolate a->b (degrees) along the shortest arc, result wrapped to [0,360)."""
+    delta = ((b - a + 180.0) % 360.0) - 180.0
+    return (a + delta * f) % 360.0
 
 
 class Resolver:
@@ -171,6 +236,22 @@ class Resolver:
             dec = max(-90.0, min(90.0, dec + cmd.params["dec"] * elapsed))
             roll = (roll + cmd.params["roll"] * elapsed) % 360.0
             return (ra, dec, roll), True
+        if cmd.kind == "replay":
+            samples = cmd.params["samples"]
+            # Before/after the recorded span: clamp to the first/last attitude (held, not moving).
+            if elapsed <= samples[0][0]:
+                _, ra, dec, roll = samples[0]
+                return (ra, dec, roll), False
+            if elapsed >= samples[-1][0]:
+                _, ra, dec, roll = samples[-1]
+                return (ra, dec, roll), False
+            # Linear interpolation between the two bracketing samples (RA/roll along shortest arc).
+            for (t0, ra0, dec0, roll0), (t1, ra1, dec1, roll1) in zip(samples, samples[1:]):
+                if t0 <= elapsed <= t1:
+                    f = (elapsed - t0) / (t1 - t0) if t1 > t0 else 0.0
+                    return (_lerp_angle(ra0, ra1, f), dec0 + (dec1 - dec0) * f,
+                            _lerp_angle(roll0, roll1, f)), True
+            return (samples[-1][1], samples[-1][2], samples[-1][3]), False  # ponytail: unreachable guard
         if cmd.kind in ("blank", "flash"):        # hold attitude; the frame is filled by display_color
             return (ra, dec, roll), False
         raise ValueError(f"unhandled command kind {cmd.kind!r}")
@@ -249,6 +330,25 @@ def _demo() -> None:
     lis = parse_commands("lost_in_space 5 3 42")
     assert len(lis) == 10 and lis[0].kind == "point_at" and lis[1].kind == "hold"
     assert parse_commands("lost_in_space 5 3 42")[0].params == lis[0].params  # seed reproducible
+    # replay: CSV trajectory interpolates over time, holds ends, and wraps RA the short way.
+    import tempfile, os
+    fd, csv_path = tempfile.mkstemp(suffix=".csv")
+    with os.fdopen(fd, "w", newline="") as f:
+        f.write("t_recv,truth_ra,truth_dec,truth_roll\n"
+                "10.0,350.0,0.0,0.0\n12.0,10.0,4.0,0.0\n")  # RA 350->10 (short arc +20 over 2s)
+    try:
+        cmd = parse_commands(f"replay {csv_path} truth_")[0]
+        assert cmd.kind == "replay" and abs(cmd.duration - 2.0) < 1e-9
+        rr = Resolver([cmd], (0.0, 0.0, 0.0))
+        rr.attitude(0.0)                          # anchor the command clock at t=0
+        (ra, dec, _), moving = rr.attitude(1.0)   # midpoint: RA 350+10=0 (short arc), dec 2, moving
+        assert abs(((ra + 180) % 360) - 180) < 1e-6 and abs(dec - 2.0) < 1e-6 and moving, (ra, dec)
+        (ra, _, _), moving = rr.attitude(5.0)     # past the end: hold last, not moving
+        assert abs(ra - 10.0) < 1e-6 and not moving, ra
+        # auto-detect prefix (no col arg) finds truth_ columns.
+        assert parse_commands(f"replay {csv_path}")[0].kind == "replay"
+    finally:
+        os.unlink(csv_path)
     print("commands.py self-check passed")
 
 

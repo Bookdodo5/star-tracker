@@ -194,6 +194,16 @@
     <hr class="div">
 
     <div class="group">
+      <div class="group-label">Replay CSV (server-side path; e.g. outputs/simulator_run_*.csv)</div>
+      <div class="fieldrow">
+        <div class="field wide"><label for="replayfile">File</label><input type="text" id="replayfile" placeholder="outputs/simulator_run_123.csv"></div>
+        <div class="field"><label for="replaycol">Col prefix</label><input type="text" id="replaycol" placeholder="auto"></div>
+        <button onclick="cmd(`replay ${v('replayfile')}${v('replaycol')?' '+v('replaycol'):''}`)">Replay</button>
+      </div>
+    </div>
+    <hr class="div">
+
+    <div class="group">
       <div class="group-label">Blank</div>
       <div class="fieldrow">
         <div class="field"><label for="blanks">Seconds</label><input type="number" id="blanks" value="2"></div>
