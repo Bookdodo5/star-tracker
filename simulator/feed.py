@@ -18,6 +18,13 @@ from typing import Optional
 
 _KV = re.compile(r"attitude_ra_deg=(-?\d+\.?\d*)\s+attitude_dec_deg=(-?\d+\.?\d*)\s+attitude_roll_deg=(-?\d+\.?\d*)")
 _RA = re.compile(r"\bRA=\s*(-?\d+\.?\d*)\s+DEC=\s*(-?\d+\.?\d*)\s+ROLL=\s*(-?\d+\.?\d*)")
+_FOV_LOCK = re.compile(r"\[fov-search\] locked FOV = (-?\d+\.?\d*)")
+
+
+def parse_locked_fov(line: str) -> Optional[float]:
+    """Returns the recovered FOV (deg) from a ``--fov-search`` lock line, or None."""
+    m = _FOV_LOCK.search(line)
+    return float(m.group(1)) if m else None
 
 
 def parse_line(line: str) -> Optional[tuple[float, float, float]]:
@@ -48,6 +55,8 @@ def _demo() -> None:
     # Coasting lines carry a *stale* attitude and must not count as fresh estimates.
     assert parse_line("frame 14 | t=1.0s | NULL (hold) RA= 100.5  DEC=  -5.4  ROLL=  12.0") is None
     assert parse_line("random noise") is None
+    assert parse_locked_fov("[fov-search] locked FOV = 9.842 deg (confirmed 2 frames)") == 9.842
+    assert parse_locked_fov("frame 1 | NULL") is None
     print("feed.py self-check passed")
 
 

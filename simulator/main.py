@@ -33,7 +33,7 @@ from pathlib import Path
 
 from .commands import Resolver, parse_commands
 from .comparator import Comparator, TruthTimeline, estimate_delay
-from .feed import parse_line
+from .feed import parse_line, parse_locked_fov
 from .renderer import Renderer, flash_jpeg
 from .state import SimState
 from .stream_server import FrameBuffer, start_server
@@ -122,6 +122,9 @@ class TrackerController:
 
     def ingest(self, line: str) -> None:
         """Parses one tracker stdout line and, if it's an attitude, scores + records it."""
+        locked_fov = parse_locked_fov(line)
+        if locked_fov is not None:
+            self._state.update_metrics({"locked_fov": locked_fov})
         est = parse_line(line)
         if est is None:
             return
@@ -142,16 +145,26 @@ class TrackerController:
             self.ingest(line)
         self._state.update_metrics({"tracker_running": False})
 
-    def start_tracker(self) -> str:
+    def start_tracker(self, fov: float | None = None, fov_search: bool = False) -> str:
+        """
+        Starts the tracker child. ``--tracker`` is the base command (e.g. ``python
+        pi_identify.py --no-stream``); ``fov``/``fov_search`` are appended as
+        ``--fov <fov>`` / ``--fov-search`` so the web UI can toggle FOV search per run
+        without baking it into the fixed command line.
+        """
         if self._cmd is None:
             raise RuntimeError("no --tracker command configured")
         if self._proc is not None and self._proc.poll() is None:
             return "already running"
-        self._proc = subprocess.Popen(shlex.split(self._cmd), stdout=subprocess.PIPE,
-                                      text=True, bufsize=1)
-        self._state.update_metrics({"tracker_running": True})
+        args = shlex.split(self._cmd)
+        if fov is not None:
+            args += ["--fov", str(fov)]
+        if fov_search:
+            args += ["--fov-search"]
+        self._proc = subprocess.Popen(args, stdout=subprocess.PIPE, text=True, bufsize=1)
+        self._state.update_metrics({"tracker_running": True, "locked_fov": None})
         threading.Thread(target=self._read_loop, daemon=True).start()
-        return "started"
+        return f"started: {' '.join(args)}"
 
     def stop_tracker(self) -> str:
         if self._proc is not None:
@@ -199,6 +212,10 @@ class TrackerController:
         self._state.update_metrics({"delay": round(delay, 4)})
         return {"ok": True, "delay": round(delay, 4)}
 
+    def evaluate(self, static_only: bool = True) -> dict:
+        """Accuracy summary over comparisons recorded so far (see comparator.Comparator.summary)."""
+        return self._comparator.summary(static_only=static_only)
+
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Star simulator: render + stream + control + score")
@@ -219,7 +236,9 @@ def main() -> None:
     src.add_argument("--start-roll", type=float, default=0.0, help="initial roll")
 
     sc = p.add_argument_group("scoring (optional)")
-    sc.add_argument("--tracker", help="tracker command the simulator can spawn (Start/Stop via API)")
+    sc.add_argument("--tracker", help="base tracker command the simulator can spawn (Start/Stop via API); "
+                                       "--fov/--fov-search are appended per-run from the control UI, so "
+                                       "omit them here, e.g. \"python pi_identify.py --no-stream\"")
     sc.add_argument("--preview-url", default="http://127.0.0.1:8080/",
                     help="tracker camera-preview MJPEG URL for the flash liveness check")
     sc.add_argument("--autostart", action="store_true", help="start --tracker immediately")

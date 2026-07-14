@@ -7,8 +7,9 @@ Serves, on one port over the local network:
     ``GET  /status``         live metrics + current render config (JSON)
     ``POST /command``        body {"line": "point_at 83.8 -5.4"} → injected live
     ``POST /config``         body of render params (gain/gamma/noise_sigma/…) → merged
-    ``POST /tracker/start``  start the tracker child   (needs a controller)
+    ``POST /tracker/start``  start the tracker child, body {"fov":10,"fov_search":false} (needs a controller)
     ``POST /tracker/stop``   stop the tracker child    (needs a controller)
+    ``POST /tracker/evaluate`` accuracy summary so far, body {"static_only":true} (needs a controller)
     ``POST /calibrate-delay`` measure + set pipeline_delay (needs a controller)
 
 The phone opens ``http://<host>:<port>/``; the web control page (``/control``) and the
@@ -107,9 +108,15 @@ def start_server(buffer: FrameBuffer, state=None, port: int = 8090, controller=N
             elif self.path.startswith("/config"):
                 self._json({"ok": True, "config": state.update_config(self._read_json())})
             elif self.path.startswith("/tracker/start"):
-                self._controller_call(controller and controller.start_tracker)
+                body = self._read_json()
+                self._controller_call(controller and controller.start_tracker,
+                                      fov=body.get("fov"), fov_search=bool(body.get("fov_search")))
             elif self.path.startswith("/tracker/stop"):
                 self._controller_call(controller and controller.stop_tracker)
+            elif self.path.startswith("/tracker/evaluate"):
+                body = self._read_json()
+                self._controller_call(controller and controller.evaluate,
+                                      static_only=body.get("static_only", True))
             elif self.path.startswith("/calibrate-delay"):
                 self._controller_call(controller and controller.calibrate_delay)
             elif self.path.startswith("/flash-check"):
@@ -127,11 +134,11 @@ def start_server(buffer: FrameBuffer, state=None, port: int = 8090, controller=N
             else:
                 self._json({"error": "unknown route"}, 404)
 
-        def _controller_call(self, fn):
+        def _controller_call(self, fn, **kwargs):
             if fn is None:
                 return self._json({"error": "no controller"}, 501)
             try:
-                self._json({"ok": True, "result": fn()})
+                self._json({"ok": True, "result": fn(**kwargs)})
             except Exception as exc:  # surface controller errors as 500 JSON, don't crash the server
                 self._json({"error": str(exc)}, 500)
 
