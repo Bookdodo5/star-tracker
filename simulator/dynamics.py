@@ -113,7 +113,10 @@ def run_detumble(dut, body: RigidBody = None, controller: RateController = None,
 def run_hil_detumble(host: str, gain: float = 0.3, alpha: float = 0.5,
                      control_period: float = 2.0, window_s: float = 4.0,
                      duration_s: float = 90.0, omega0=(1.5, 0.3, 2.0),
-                     stop_below: float = 0.05, roll_sign: float = 1.0) -> list:
+                     stop_below: float = 0.05, roll_sign: float = 1.0,
+                     flush_s: float = 1.5, torque_max: float = 1.0,
+                     deadband: float = 0.15, target=None, kp: float = 0.08,
+                     slew_max: float = 1.5, pointing_tol: float = 0.3) -> list:
     """
     REAL-TIME hardware-in-the-loop detumble: the displayed field tumbles continuously —
     no stop-and-stare. The plant never pauses; delay and estimate latency act on the loop
@@ -124,10 +127,31 @@ def run_hil_detumble(host: str, gain: float = 0.3, alpha: float = 0.5,
     torque (ω ← ω − k·ω̂·T, inertia 1), so "applying force" = re-commanding the new rates.
     The controller measures ω̂ ONLY from the tracker: it collects timestamped estimates
     (``est_t`` is the serve-side clock, so differencing needs no clock sync), unwraps
-    ra/roll, and fits the rate over the trailing ``window_s`` endpoints (a longer baseline
-    divides estimate noise, the fix for raw-differencing noise ≈ σ_att/dt), EMA-filtered
-    by ``alpha``. Phase lag from the pipeline delay is genuinely present — keep
+    ra/roll, and fits the rate as the least-squares slope over every estimate in the
+    trailing ``window_s`` (longer baseline + all-samples regression both divide estimate
+    noise — the fix for raw-differencing noise ≈ σ_att/dt), EMA-filtered by ``alpha``. Phase lag from the pipeline delay is genuinely present — keep
     ``gain·control_period`` ≲ 0.8 or the loop hunts.
+
+    Start-up guard: estimates in flight when the loop starts belong to the pre-tumble
+    field (a ``point_at`` jump away), so the first ``flush_s`` of estimates is discarded;
+    ``torque_max`` clamps the per-axis torque so one corrupted rate window cannot slam
+    the commanded rates; ``deadband`` (deg/s, at the base window) zeroes the torque when
+    every axis' estimated rate is noise-level. While coasting, the fit window stretches
+    (up to 4×``window_s``) and the threshold shrinks proportionally — a longer baseline
+    averages noise down, so genuinely slow drift is eventually distinguished and damped,
+    while pure noise never triggers actuation.
+
+    Pointing mode (``target=(ra, dec, roll)``): cascaded control. The outer loop turns
+    the attitude error (latest tracker estimate − target, shortest path) into a desired
+    rate ``ω_des = clamp(−kp·err, ±slew_max)``; the inner loop is the same rate damper,
+    now driving ``ω̂ → ω_des`` instead of → 0. ``slew_max`` caps the approach rate so the
+    tracker never sees blur-fast motion; ``pointing_tol`` (deg) is the arrival gate for
+    the early-stop. Pure detumble is the ``ω_des = 0`` special case.
+
+    Stability: the rate measurement lags ~6–8 s (fit-window midpoint + EMA + control
+    period + pipeline), so the outer loop must be slower than that lag: keep
+    ``1/kp ≳ 1.5×lag`` (kp ≲ 0.1). kp=0.25 was measured to limit-cycle at ~8–12° with
+    ~25 s period on the real rig — the classic saturated-P-with-delay oscillation.
 
     ``roll_sign``: −1 if the tracker's roll convention is mirrored (symptom: roll rate
     grows while ra/dec damp). Star-poor pointings just pause updates (rates hold) until
@@ -143,10 +167,18 @@ def run_hil_detumble(host: str, gain: float = 0.3, alpha: float = 0.5,
 
     omega = list(omega0)
     ctl.send_command(host, f"tumble {omega[0]:.4f} {omega[1]:.4f} {omega[2]:.4f} forever")
+    # Flush: estimates already in flight belong to the PRE-tumble field (possibly a huge
+    # point_at jump away). Differencing across that discontinuity fakes a rate of tens of
+    # deg/s and the first torque slams the plant. Wait out the pipeline, then discard
+    # everything solved so far by starting the freshness cursor at the current est_t.
+    time.sleep(flush_s)
+    last_est_t = ctl.get_status(host)["metrics"].get("est_t") or -1.0
     estimates: collections.deque = collections.deque()  # (est_t, ra_unwrapped, dec, roll_unwrapped)
     unwrapped = None
-    last_est_t = -1.0
+    latest = None                                        # freshest wrapped estimate (pointing error)
+    win = window_s                                       # current fit baseline (grows while coasting)
     omega_filt = None
+    err = None                                           # pointing error (deg), None until an estimate
     history = []
     t_end = time.monotonic() + duration_s
     while time.monotonic() < t_end:
@@ -164,28 +196,82 @@ def run_hil_detumble(host: str, gain: float = 0.3, alpha: float = 0.5,
                     unwrapped[1] = dec
                     unwrapped[2] += wrap_deg(roll - unwrapped[2] % 360.0)
                 estimates.append((est_t, *unwrapped))
+                latest = (ra, dec, roll)                 # freshest wrapped estimate (pointing error)
             time.sleep(0.1)
-        while estimates and estimates[0][0] < last_est_t - window_s:
+        while estimates and estimates[0][0] < last_est_t - win:
             estimates.popleft()
         if len(estimates) >= 2:
-            (t0, *a0), (t1, *a1) = estimates[0], estimates[-1]
-            if t1 - t0 >= 0.5:                           # need a baseline for a stable rate
-                rate = [(v1 - v0) / (t1 - t0) for v0, v1 in zip(a0, a1)]
+            t_first, t_last = estimates[0][0], estimates[-1][0]
+            if t_last - t_first >= 0.5:                  # need a baseline for a stable rate
+                # Least-squares slope over ALL estimates in the window, not just the two
+                # endpoints: every sample contributes, so rate noise drops ~sqrt(N/6)x
+                # (~2x at N≈25) at the same effective lag (both estimate the rate at the
+                # window midpoint), and a single outlier can no longer own an endpoint.
+                n = len(estimates)
+                t_mean = sum(e[0] for e in estimates) / n
+                denom = sum((e[0] - t_mean) ** 2 for e in estimates)
+                rate = [sum((e[0] - t_mean) * e[axis] for e in estimates) / denom
+                        for axis in (1, 2, 3)]
                 omega_filt = rate if omega_filt is None else \
                     [(1.0 - alpha) * f + alpha * r for f, r in zip(omega_filt, rate)]
-                torque = [-gain * f for f in omega_filt]
+                # Pointing: attitude error (shortest path) → desired rate that nulls it,
+                # capped at slew_max so the tracker never sees blur-fast motion. With no
+                # target (pure detumble) the desired rate is simply zero.
+                if target is not None and latest is not None:
+                    err = [wrap_deg(latest[0] - target[0]),
+                           latest[1] - target[1],
+                           wrap_deg(latest[2] - target[2])]
+                    omega_des = [max(-slew_max, min(slew_max, -kp * e)) for e in err]
+                else:
+                    omega_des = [0.0, 0.0, 0.0]
+                # Deadband with patience: near zero the fitted rate is mostly estimate
+                # noise (≈ 2σ_att / baseline). While every axis is below the threshold,
+                # coast AND stretch the fit window — noise shrinks ~1/baseline, so the
+                # threshold shrinks with it, and a genuinely drifting body (displacement
+                # grows linearly with time) eventually crosses it. Any detection snaps
+                # the window back to ``window_s`` for fast response.
+                threshold = deadband * (window_s / win)
+                rate_err = [f - d for f, d in zip(omega_filt, omega_des)]
+                parked = (target is not None and err is not None
+                          and max(abs(e) for e in err) <= pointing_tol
+                          and all(abs(f) <= deadband for f in omega_filt))
+                if parked:
+                    # Park: inside tolerance with noise-level measured rates. Null the
+                    # commanded rates outright — coasting here would freeze a residual
+                    # ±deadband drift into the plant and the field would slowly orbit
+                    # the target forever instead of stopping on it.
+                    omega = [0.0, 0.0, 0.0]
+                    torque = [0.0, 0.0, 0.0]
+                    win = min(win * 1.5, 4.0 * window_s)
+                elif target is None and all(abs(re) <= threshold for re in rate_err):
+                    # Rate deadband is a DETUMBLE guard only. With a target, ω_des=kp·err
+                    # sits below any deadband for |err| < deadband/kp (~2°), which turns
+                    # the deadband into a position dead zone the field wanders in forever
+                    # — so in pointing mode the only coast state is the park above.
+                    win = min(win * 1.5, 4.0 * window_s)  # ponytail: cap staleness at 4x
+                    torque = [0.0, 0.0, 0.0]
+                else:
+                    win = window_s
+                    # Clamp per-axis torque: one corrupted window (blurred/false solve,
+                    # discontinuity) must not spin the plant up faster than
+                    # torque_max·control_period per step; an honest estimate self-corrects.
+                    torque = [max(-torque_max, min(torque_max, -gain * re)) for re in rate_err]
                 omega = [w + tq * control_period for w, tq in zip(omega, torque)]
                 ctl.send_command(host, f"tumble {omega[0]:.4f} {omega[1]:.4f} {omega[2]:.4f} forever")
         mag_cmd = math.sqrt(sum(w * w for w in omega))
         mag_est = math.sqrt(sum(f * f for f in omega_filt)) if omega_filt else float("nan")
         history.append(mag_cmd)
-        print(f"  |w| true={mag_cmd:5.2f} deg/s  estimated={mag_est:5.2f} deg/s  "
+        err_txt = f"  err=({err[0]:+7.2f},{err[1]:+7.2f},{err[2]:+7.2f}) deg" if err else ""
+        print(f"  |w| true={mag_cmd:5.2f} deg/s  estimated={mag_est:5.2f} deg/s{err_txt}  "
               f"(estimates in window: {len(estimates)})", flush=True)
-        if omega_filt is not None and mag_cmd < stop_below:
+        on_target = target is None or (err is not None and max(abs(e) for e in err) <= pointing_tol)
+        if omega_filt is not None and mag_cmd < stop_below and on_target:
             break
     ctl.send_command(host, f"tumble {omega[0]:.4f} {omega[1]:.4f} {omega[2]:.4f} forever")
-    print(f"HIL real-time detumble: |w| {history[0]:.2f} -> {history[-1]:.3f} deg/s "
-          f"over {len(history)} control steps")
+    label = f"point+stabilize at ({target[0]}, {target[1]}, {target[2]})" if target else "detumble"
+    print(f"HIL real-time {label}: |w| {history[0]:.2f} -> {history[-1]:.3f} deg/s "
+          f"over {len(history)} control steps"
+          + (f", final err=({err[0]:+.2f},{err[1]:+.2f},{err[2]:+.2f}) deg" if err else ""))
     return history
 
 
