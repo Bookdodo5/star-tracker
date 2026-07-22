@@ -118,7 +118,9 @@ def start_server(buffer: FrameBuffer, state=None, port: int = 8090, controller=N
                 self._controller_call(controller and controller.evaluate,
                                       static_only=body.get("static_only", True))
             elif self.path.startswith("/calibrate-delay"):
-                self._controller_call(controller and controller.calibrate_delay)
+                body = self._read_json()
+                self._controller_call(controller and controller.calibrate_delay,
+                                      **{k: float(body[k]) for k in ("offset_deg", "settle_s") if k in body})
             elif self.path.startswith("/flash-check"):
                 if controller is not None:
                     self._controller_call(controller.flash_check)

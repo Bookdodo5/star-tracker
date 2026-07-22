@@ -46,6 +46,14 @@ RUNS = [
 ]
 
 
+def log_path(name):
+    """Resolve a log file that may live at the repo root or in cache/."""
+    for candidate in (os.path.join(ROOT, name), os.path.join(ROOT, "cache", name)):
+        if os.path.exists(candidate):
+            return candidate
+    raise FileNotFoundError(f"{name} not found in repo root or cache/")
+
+
 def parse_log(path):
     """Return list of sessions; each session is an (N,5) array of
     [t, ra, dec, roll, *quat...] rows -> actually (t, ra, dec, roll, qx,qy,qz,qw),
@@ -248,7 +256,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     logs = {}
     for log in sorted({r[0] for r in RUNS}):
-        logs[log] = parse_log(os.path.join(ROOT, log))
+        logs[log] = parse_log(log_path(log))
 
     windows = {}
     for log, si, t0, t1, label, _ in RUNS:

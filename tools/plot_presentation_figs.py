@@ -20,7 +20,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from plot_detumble_logs import (ROOT, parse_log, quat_rate,
-                                pointing_error_deg, wrap180)
+                                pointing_error_deg, wrap180, log_path)
 
 OUT = os.path.join(ROOT, "outputs", "presentation_figs")
 
@@ -33,7 +33,7 @@ plt.rcParams.update({
 
 def segment(log, session, t0, t1):
     """Solved frames of one run window, time rebased to 0."""
-    data = parse_log(os.path.join(ROOT, log))[session]
+    data = parse_log(log_path(log))[session]
     seg = data[(data[:, 0] >= t0) & (data[:, 0] <= t1)].copy()
     seg[:, 0] -= seg[0, 0]
     return seg

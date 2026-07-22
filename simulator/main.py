@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import shlex
 import socket
 import subprocess
@@ -196,27 +197,46 @@ class TrackerController:
                                            "(camera not pointed at the screen, or preview not running)"}
         return {"ok": True, "visual_round_trip_s": round(round_trip, 3)}
 
-    def calibrate_delay(self, offset_deg: float = 8.0, settle_s: float = 4.0) -> dict:
+    def calibrate_delay(self, offset_deg: float = 8.0, settle_s: float = 6.0) -> dict:
         """
         Measures pipeline delay by commanding a known RA step and timing when the tracker's
         estimate follows (comparator.estimate_delay over the stdout stream — the quantity that
-        actually needs compensating). Sets the comparator delay on success.
+        actually needs compensating). The detection is a *transition* (estimate becomes closer
+        to the new pointing than the old), so a constant absolute pointing bias — normal for
+        phone-screen optics — does not break it. Sets the comparator delay on success; on
+        failure the reason says what was actually observed.
         """
         truth = self._state.get_metrics().get("truth")
         if truth is None:
             return {"ok": False, "reason": "no current truth"}
-        new_ra = (truth[0] + offset_deg) % 360.0
+        # Only meaningful for a spawned tracker; --compare-stdin feeds estimates with no child.
+        if self._cmd is not None and not self._state.get_metrics().get("tracker_running"):
+            return {"ok": False, "reason": "tracker is not running — Start it first"}
+        old_pointing = (truth[0], truth[1])
+        # RA degrees shrink by cos(dec) on the sky; scale so the step stays ~offset_deg angular.
+        ra_step = offset_deg / max(0.2, math.cos(math.radians(truth[1])))
+        new_ra = (truth[0] + ra_step) % 360.0
         new_pointing = (new_ra, truth[1])
         step_time = time.monotonic() - self._t0
         self._estimates = [e for e in self._estimates if e[0] >= step_time]  # only post-step
         self._state.put_command(f"point_at {new_ra} {truth[1]} {truth[2]}")  # via mailbox (render thread injects)
         time.sleep(settle_s)
-        delay = estimate_delay(list(self._estimates), step_time, new_pointing)
+        post_step = list(self._estimates)
+        delay = estimate_delay(post_step, step_time, old_pointing, new_pointing)
         if delay is None:
-            return {"ok": False, "reason": "estimate never reached the commanded step"}
+            if not post_step:
+                reason = (f"no estimates arrived in {settle_s:.0f}s after the step — tracker is "
+                          "running but not solving (check the tracker log: FOV? camera aimed?)")
+            else:
+                from .attitude import angular_sep_deg
+                closest = min(angular_sep_deg((e[0], e[1]), new_pointing) for _, e in post_step)
+                reason = (f"{len(post_step)} estimates in {settle_s:.0f}s never followed the "
+                          f"{offset_deg:.0f}° step (closest came {closest:.2f}° from the target) — "
+                          "tracker may be losing lock after the jump; retry or raise settle_s")
+            return {"ok": False, "reason": reason}
         self._comparator.set_delay(delay)
         self._state.update_metrics({"delay": round(delay, 4)})
-        return {"ok": True, "delay": round(delay, 4)}
+        return {"ok": True, "delay": round(delay, 4), "estimates_seen": len(post_step)}
 
     def evaluate(self, static_only: bool = True) -> dict:
         """Accuracy summary over comparisons recorded so far (see comparator.Comparator.summary)."""
