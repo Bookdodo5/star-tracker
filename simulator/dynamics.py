@@ -122,7 +122,7 @@ def run_hil_detumble(host: str, gain: float = 0.3, alpha: float = 0.5,
     no stop-and-stare. The plant never pauses; delay and estimate latency act on the loop
     exactly as they would on a spacecraft.
 
-    Plant: the running simulator itself. ``tumble <rates> forever`` makes it integrate the
+    Plant: the running simulator itself. ``gimbal_tumble <rates> forever`` makes it integrate the
     attitude continuously at the commanded body rates; this client changes those rates by
     torque (ω ← ω − k·ω̂·T, inertia 1), so "applying force" = re-commanding the new rates.
     The controller measures ω̂ ONLY from the tracker: it collects timestamped estimates
@@ -166,7 +166,7 @@ def run_hil_detumble(host: str, gain: float = 0.3, alpha: float = 0.5,
     from .attitude import wrap_deg
 
     omega = list(omega0)
-    ctl.send_command(host, f"tumble {omega[0]:.4f} {omega[1]:.4f} {omega[2]:.4f} forever")
+    ctl.send_command(host, f"gimbal_tumble {omega[0]:.4f} {omega[1]:.4f} {omega[2]:.4f} forever")
     # Flush: estimates already in flight belong to the PRE-tumble field (possibly a huge
     # point_at jump away). Differencing across that discontinuity fakes a rate of tens of
     # deg/s and the first torque slams the plant. Wait out the pipeline, then discard
@@ -257,7 +257,7 @@ def run_hil_detumble(host: str, gain: float = 0.3, alpha: float = 0.5,
                     # torque_max·control_period per step; an honest estimate self-corrects.
                     torque = [max(-torque_max, min(torque_max, -gain * re)) for re in rate_err]
                 omega = [w + tq * control_period for w, tq in zip(omega, torque)]
-                ctl.send_command(host, f"tumble {omega[0]:.4f} {omega[1]:.4f} {omega[2]:.4f} forever")
+                ctl.send_command(host, f"gimbal_tumble {omega[0]:.4f} {omega[1]:.4f} {omega[2]:.4f} forever")
         mag_cmd = math.sqrt(sum(w * w for w in omega))
         mag_est = math.sqrt(sum(f * f for f in omega_filt)) if omega_filt else float("nan")
         history.append(mag_cmd)
@@ -267,7 +267,7 @@ def run_hil_detumble(host: str, gain: float = 0.3, alpha: float = 0.5,
         on_target = target is None or (err is not None and max(abs(e) for e in err) <= pointing_tol)
         if omega_filt is not None and mag_cmd < stop_below and on_target:
             break
-    ctl.send_command(host, f"tumble {omega[0]:.4f} {omega[1]:.4f} {omega[2]:.4f} forever")
+    ctl.send_command(host, f"gimbal_tumble {omega[0]:.4f} {omega[1]:.4f} {omega[2]:.4f} forever")
     label = f"point+stabilize at ({target[0]}, {target[1]}, {target[2]})" if target else "detumble"
     print(f"HIL real-time {label}: |w| {history[0]:.2f} -> {history[-1]:.3f} deg/s "
           f"over {len(history)} control steps"

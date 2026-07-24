@@ -163,12 +163,28 @@
     <hr class="div">
 
     <div class="group">
-      <div class="group-label">Tumble (continuous)</div>
+      <div class="group-label">Gimbal tumble (kinematic — constant per-axis angle rates)</div>
       <div class="fieldrow">
         <div class="field"><label for="tra">RA (°/s)</label><input type="number" id="tra" value="2"></div>
         <div class="field"><label for="tdec">Dec (°/s)</label><input type="number" id="tdec" value="1"></div>
         <div class="field"><label for="troll">Roll (°/s)</label><input type="number" id="troll" value="3"></div>
-        <button onclick="cmd(`tumble ${v('tra')} ${v('tdec')} ${v('troll')} forever`)">Tumble</button>
+        <button onclick="cmd(`gimbal_tumble ${v('tra')} ${v('tdec')} ${v('troll')} forever`)">Gimbal tumble</button>
+      </div>
+    </div>
+    <hr class="div">
+
+    <div class="group">
+      <div class="group-label">Free tumble (physical — torque-free rigid body, Euler's equation)</div>
+      <div class="fieldrow">
+        <div class="field"><label for="fwx">ω&#8339; body (°/s)</label><input type="number" id="fwx" value="4"></div>
+        <div class="field"><label for="fwy">ω&#8340; body (°/s)</label><input type="number" id="fwy" value="3"></div>
+        <div class="field"><label for="fwz">ω&#8341; body (°/s)</label><input type="number" id="fwz" value="5"></div>
+      </div>
+      <div class="fieldrow">
+        <div class="field"><label for="fix">I&#8339;</label><input type="number" id="fix" value="1"></div>
+        <div class="field"><label for="fiy">I&#8340;</label><input type="number" id="fiy" value="1.7"></div>
+        <div class="field"><label for="fiz">I&#8341;</label><input type="number" id="fiz" value="2.5"></div>
+        <button onclick="cmd(`free_tumble ${v('fwx')} ${v('fwy')} ${v('fwz')} ${v('fix')} ${v('fiy')} ${v('fiz')} forever`)">Free tumble</button>
       </div>
     </div>
     <hr class="div">

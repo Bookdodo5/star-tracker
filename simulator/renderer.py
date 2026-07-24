@@ -2,7 +2,7 @@
 Star-field renderer for the simulator.
 
 Uses the *same* pinhole projection the C identifier expects — the camera basis and pixel
-math are taken from ``tools/render_catalog_test_image.py`` (one source of truth for the
+math are taken from ``media/render_catalog_test_image.py`` (one source of truth for the
 camera model / chirality), but the per-star loop is replaced with a single numpy matmul so
 it stays fast on the ~26k-star Tycho-2 catalog at video rate.
 
@@ -25,7 +25,7 @@ import cv2
 import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+sys.path.insert(0, str(PROJECT_ROOT / "media"))
 import render_catalog_test_image as R  # noqa: E402  (camera_basis + unit_vector, reused)
 
 from .state import DEFAULT_CONFIG  # noqa: E402

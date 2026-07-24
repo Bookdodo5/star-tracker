@@ -72,7 +72,7 @@ KNOBS = [
      "K used for dense anchors (those above density-thresh companions)."),
 ]
 
-# Synthetic gate constants (match scripts/sweep_db.py and coverage_sweep.py so numbers agree).
+# Synthetic gate constants (match benchmarks/sweep_db.py and coverage_sweep.py so numbers agree).
 MIN_BRIGHT = 6            # a field is VALID only if it holds this many DB-magnitude stars
 QUERY_STARS = 16         # matches TETRA_MAX_QUERY_STARS: the solver only tries the brightest 16
 DEFAULT_FIELDS = 2000

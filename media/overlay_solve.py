@@ -10,7 +10,7 @@ FOV) and its own centroid detector, projected back with the exact inverse of the
 camera model (`pixel_to_unit_vector` = ((cx-x)/f,(cy-y)/f,1)), so no roll/chirality
 guessing. Run:
 
-    python tools/overlay_solve.py cache/FVIDEO/UntitledNULL.png --fov 10 --fov-search
+    python media/overlay_solve.py cache/FVIDEO/UntitledNULL.png --fov 10 --fov-search
 """
 from __future__ import annotations
 

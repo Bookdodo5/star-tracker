@@ -14,6 +14,11 @@ One front door for the simulator:
                                         attitude and stabilize there)
     python -m simulator selftest        run every module's built-in self-check
 
+For a detumble against a *physically* tumbling body (torque-free rigid body, Euler's equation)
+plus sky-path / attitude figures, run ``python media/plot_free_detumble.py`` — the plant there
+is ``freebody.FreeRigidBody`` and the controller ``freebody.BodyRateController``, rather than
+the decoupled-angle-rate ``dynamics.RigidBody`` this demo uses.
+
 ``python -m simulator.<module>`` still runs an individual module's self-check directly.
 """
 from __future__ import annotations
@@ -76,8 +81,10 @@ def main() -> None:
             dynamics._demo(full_image_pipeline="--image" in sys.argv)
     elif verb == "selftest":
         # Cheap, dependency-free checks first; the last three need the catalog CSV + DLL.
-        from . import attitude, commands, comparator, control, feed, state, sync, renderer, dut, dynamics
-        for module in (attitude, commands, comparator, control, feed, state, sync, renderer, dut, dynamics):
+        from . import (attitude, commands, comparator, control, feed, state, sync, renderer,
+                       freebody, dut, dynamics)
+        for module in (attitude, commands, comparator, control, feed, state, sync, renderer,
+                       freebody, dut, dynamics):
             module._demo()
         print("simulator selftest: all modules passed")
     else:

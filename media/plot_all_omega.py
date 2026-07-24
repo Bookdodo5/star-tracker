@@ -2,7 +2,7 @@
 One clean |omega| vs time plot per detumble run (all 8 windows), presentation
 style, minimal text. Also a combined 2x4 grid for side-by-side comparison.
 
-Usage: python tools/plot_all_omega.py
+Usage: python media/plot_all_omega.py
 Output: outputs/presentation_figs/omega/
 """
 import os

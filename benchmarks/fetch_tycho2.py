@@ -5,7 +5,7 @@ Tycho-2 is far denser than the Yale BSC, so a small 7x4 deg field holds enough s
 to solve. We keep V <= --vmax (default 8.0, with margin above the 7.5 validity gate).
 Johnson V is approximated from Tycho photometry: V = VT - 0.090*(BT-VT).
 
-    python scripts/fetch_tycho2.py --vmax 8.0 --out data/tycho2.parquet
+    python benchmarks/fetch_tycho2.py --vmax 8.0 --out data/tycho2.parquet
 """
 from __future__ import annotations
 

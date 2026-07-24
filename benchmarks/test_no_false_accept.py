@@ -15,8 +15,8 @@ Four suites, each prints PASS/FAIL; the process exits non-zero if any fails:
                       Every accepted solve must have BOTH recovered-FOV within 3% AND pointing
                       within tol, else it locked a wrong FOV / wrong attitude.  Expect 0 bad.
 
-Run:  python scripts/test_no_false_accept.py            # default sizes (~1-2 min)
-      python scripts/test_no_false_accept.py --quick    # small, for a fast smoke
+Run:  python benchmarks/test_no_false_accept.py            # default sizes (~1-2 min)
+      python benchmarks/test_no_false_accept.py --quick    # small, for a fast smoke
 """
 from __future__ import annotations
 

@@ -5,7 +5,7 @@ Fetches N RANDOM sky fields from SkyView, runs the in-process TETRA pipeline (FO
 self-calibration), and reports how many solve within --tolerance of the requested
 center. Images are cached under cache/real_images/ (named by RA/DEC) so reruns are offline.
 
-    python scripts/batch_dss_compare.py --count 20 --fov-w 7 --fov-h 4 --tolerance 0.5
+    python benchmarks/batch_dss_compare.py --count 20 --fov-w 7 --fov-h 4 --tolerance 0.5
 
 FOV note: the camera model uses fx=fy, so only the horizontal FOV (--fov-w) is passed
 to the solver; --fov-h only sizes the fetched image (height px = width px * fov_h/fov_w).

@@ -188,7 +188,7 @@ def load_db_catalog(mag_limit: float | None = None) -> pd.DataFrame:
             break
     else:
         raise FileNotFoundError(
-            "Tycho-2 cache not found. Run: python scripts/fetch_tycho2.py --vmax 8.0 --out data/tycho2.csv"
+            "Tycho-2 cache not found. Run: python benchmarks/fetch_tycho2.py --vmax 8.0 --out data/tycho2.csv"
         )
 
     df = pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)

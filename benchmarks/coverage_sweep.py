@@ -7,7 +7,7 @@ A field solves iff >=1 four-subset of its brightest-10 footprint stars is a DB t
 We replicate DB tetrad generation (brightest-K within field_radius of each catalog star) as a
 set of integer keys, then test the same 2000 seeded synthetic fields the C harness uses.
 
-    python scripts/coverage_sweep.py --bmc 6.0,6.5,7.0 --fieldstars 8,10,12,16
+    python benchmarks/coverage_sweep.py --bmc 6.0,6.5,7.0 --fieldstars 8,10,12,16
 
 Mirrors the ANCHORED generator in export_tetra_db.py: each tetra is owned by its brightest
 star (anchor V<=BMC), members are V<=L (=7.5, the validity reference), neighbours are gathered

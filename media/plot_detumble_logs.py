@@ -13,7 +13,7 @@ Outputs (to outputs/detumble_plots/):
   B_<runlabel>.png           - per detumble window: attitude, |w| (log-y), sky path
   C_<runlabel>_targeterr.png - target-(0,0,0) runs: pointing + roll error (log-y)
 
-Usage: python tools/plot_detumble_logs.py
+Usage: python media/plot_detumble_logs.py
 """
 import math
 import os

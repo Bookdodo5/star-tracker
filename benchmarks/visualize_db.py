@@ -1,9 +1,9 @@
 """
 Four DB coverage visualizations for the TETRA anchored all-combos database.
 
-    python scripts/visualize_db.py           # K=10 (current default)
-    python scripts/visualize_db.py --k 9     # K=9 (new smaller DB)
-    python scripts/visualize_db.py --k 9 10  # compare both
+    python benchmarks/visualize_db.py           # K=10 (current default)
+    python benchmarks/visualize_db.py --k 9     # K=9 (new smaller DB)
+    python benchmarks/visualize_db.py --k 9 10  # compare both
 
 Outputs to outputs/db_viz/.
 

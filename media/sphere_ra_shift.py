@@ -7,8 +7,8 @@ true angle. The field then moves up to DEC 70 keeping the same 2 deg tilt, and t
 travels with it (move_camera). The RA gap is read off (2.31 deg -> 5.85 deg = 2 / cos(DEC)).
 
 Render:
-    manim -pqh tools/sphere_ra_shift.py RAShift          # 1080p
-    manim -pql tools/sphere_ra_shift.py RAShift           # fast preview
+    manim -pqh media/sphere_ra_shift.py RAShift          # 1080p
+    manim -pql media/sphere_ra_shift.py RAShift           # fast preview
 """
 from __future__ import annotations
 

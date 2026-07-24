@@ -4,8 +4,8 @@ red = brightest, yellow = dimmest) and projected catalog stars (white crosses + 
 onto cached DSS field images. RA/DEC are parsed from the filename and the catalog is
 projected at that true attitude (roll=0, north-up east-left convention).
 
-    python scripts/mark_centroids.py                 # all cache/real_images/*_7x4_1400.png
-    python scripts/mark_centroids.py --glob '*_700.png'
+    python benchmarks/mark_centroids.py                 # all cache/real_images/*_7x4_1400.png
+    python benchmarks/mark_centroids.py --glob '*_700.png'
 Outputs to outputs/marked/.
 """
 from __future__ import annotations

@@ -27,6 +27,7 @@ cmake_install.cmake
 outputs/
 cache/
 stars.csv
+*.log
 
 # ── Rendered / converted image intermediates ──────────────────────────────────
 # .ppm files are generated from .png sources via png_to_ppm.ps1

@@ -13,7 +13,11 @@ Commands (parsed from a text file or REPL, one per line, ``#`` comments allowed)
     hold <seconds>                 stay put for N seconds (settle window for scoring)
     slew <axis> <delta_deg> <rate> move by delta about axis (ra|dec|roll) at rate deg/s
     roll <rate> <seconds|forever>  spin about boresight at rate deg/s
-    tumble <ra/s> <dec/s> <roll/s> [seconds|forever]   3-axis constant-rate tumble
+    gimbal_tumble <ra/s> <dec/s> <roll/s> [seconds|forever]   constant per-axis angle rates
+                                   (kinematic, NOT physical — Euler angles drift independently)
+    free_tumble <wx> <wy> <wz> [Ix Iy Iz] [seconds|forever]   torque-free rigid-body tumble
+                                   (body rates deg/s + principal inertia; obeys Euler's equation,
+                                   so the boresight nutates — how a real spacecraft actually moves)
     lost_in_space <n> <hold_s> [seed]  jump to n random attitudes, hold each (solve-rate test)
     replay <file.csv> [col]        play back a recorded RA/DEC/ROLL trajectory from a CSV
     blank <seconds>                dark frame (no stars) — dark-frame / no-signal test
@@ -84,11 +88,24 @@ def parse_commands(text: str, hr_lookup: Optional[Callable[[int], tuple[float, f
                 forever = len(parts) > 2 and parts[2].lower() == "forever"
                 dur = INF if forever else float(parts[2])
                 commands.append(Command("roll", {"rate": rate}, dur))
-            elif kind == "tumble":
+            elif kind == "gimbal_tumble":
                 ra_r, dec_r, roll_r = float(parts[1]), float(parts[2]), float(parts[3])
                 forever = len(parts) > 4 and parts[4].lower() == "forever"
                 dur = INF if forever else (float(parts[4]) if len(parts) > 4 else INF)
-                commands.append(Command("tumble", {"ra": ra_r, "dec": dec_r, "roll": roll_r}, dur))
+                commands.append(Command("gimbal_tumble", {"ra": ra_r, "dec": dec_r, "roll": roll_r}, dur))
+            elif kind == "free_tumble":
+                omega = (float(parts[1]), float(parts[2]), float(parts[3]))
+                rest = parts[4:]
+                forever = bool(rest) and rest[-1].lower() == "forever"
+                if forever:
+                    rest = rest[:-1]
+                nums = [float(x) for x in rest]
+                # trailing floats are [Ix Iy Iz] and/or a duration; 3+ ⇒ inertia given.
+                inertia = tuple(nums[:3]) if len(nums) >= 3 else (1.0, 1.7, 2.5)
+                dur_tail = nums[3:4] if len(nums) >= 3 else nums[:1]
+                dur = INF if forever else (dur_tail[0] if dur_tail else INF)
+                commands.append(Command("free_tumble",
+                                        {"omega": omega, "inertia": inertia, "_integ": None}, dur))
             elif kind == "lost_in_space":
                 n, hold_s = int(parts[1]), float(parts[2])
                 seed = int(parts[3]) if len(parts) > 3 else 0
@@ -241,11 +258,13 @@ class Resolver:
         if cmd.kind == "roll":
             roll = (roll + cmd.params["rate"] * elapsed) % 360.0
             return (ra, dec, roll), True
-        if cmd.kind == "tumble":
+        if cmd.kind == "gimbal_tumble":
             ra = (ra + cmd.params["ra"] * elapsed) % 360.0
             dec = max(-90.0, min(90.0, dec + cmd.params["dec"] * elapsed))
             roll = (roll + cmd.params["roll"] * elapsed) % 360.0
             return (ra, dec, roll), True
+        if cmd.kind == "free_tumble":
+            return self._free_tumble_attitude(cmd, start, elapsed), True
         if cmd.kind == "replay":
             samples = cmd.params["samples"]
             # Before/after the recorded span: clamp to the first/last attitude (held, not moving).
@@ -265,6 +284,30 @@ class Resolver:
         if cmd.kind in ("blank", "flash"):        # hold attitude; the frame is filled by display_color
             return (ra, dec, roll), False
         raise ValueError(f"unhandled command kind {cmd.kind!r}")
+
+    def _free_tumble_attitude(self, cmd: Command, start: tuple[float, float, float],
+                              elapsed: float) -> tuple[float, float, float]:
+        """
+        Integrates a torque-free rigid body forward to ``elapsed`` and returns its attitude.
+
+        The integrator is stateful (unlike the closed-form commands), so it is cached in
+        ``cmd.params`` and stepped incrementally as ``elapsed`` advances — the render loop
+        calls with monotonically increasing time. It is rebuilt from ``start`` if the seed
+        attitude changed (a live inject) or if ``elapsed`` moved backwards (re-evaluation),
+        keeping the result a deterministic function of ``elapsed``.
+        """
+        from .freebody import FreeRigidBody  # local: keeps commands.py's base import light
+        integ = cmd.params.get("_integ")
+        if integ is None or integ["start"] != start or elapsed < integ["t"]:
+            body = FreeRigidBody(attitude=start, omega_body_deg=cmd.params["omega"],
+                                 inertia=cmd.params["inertia"])
+            integ = {"start": start, "body": body, "t": 0.0}
+            cmd.params["_integ"] = integ
+        body = integ["body"]
+        if elapsed > integ["t"]:
+            body.step(elapsed - integ["t"])
+            integ["t"] = elapsed
+        return body.attitude()
 
     def inject(self, commands: Command | list[Command], now: float) -> None:
         """
@@ -325,11 +368,25 @@ def _demo() -> None:
     r2.inject(parse_commands("slew ra 10 5")[0], 5.0)    # interrupt at t=5
     (ra, dec, _), moving = r2.attitude(5.0 + 1.0)        # 1s into the injected slew
     assert abs(ra - 105.0) < 1e-9 and abs(dec - 20.0) < 1e-9 and moving, (ra, dec)
-    # tumble: 3-axis constant rate.
-    r3 = Resolver(parse_commands("point_at 10 0 0\ntumble 1 0.5 2 forever"), (0, 0, 0))
+    # gimbal_tumble: 3-axis constant per-axis angle rate (kinematic, non-physical).
+    r3 = Resolver(parse_commands("point_at 10 0 0\ngimbal_tumble 1 0.5 2 forever"), (0, 0, 0))
     r3.attitude(0.0)
     (ra, dec, roll), moving = r3.attitude(2.0)           # 2s of tumble
     assert abs(ra - 12.0) < 1e-9 and abs(dec - 1.0) < 1e-9 and abs(roll - 4.0) < 1e-9 and moving, (ra, dec, roll)
+    # free_tumble: torque-free rigid body — pure boresight (+wz) spin holds ra/dec and changes
+    # roll at the commanded rate. NEGATIVE: +wz is right-handed about the boresight, whereas the
+    # `roll` coordinate is an image rotation about -boresight. A symmetric body keeps |w|
+    # constant, so roll is linear in time.
+    r5 = Resolver(parse_commands("point_at 50 0 0\nfree_tumble 0 0 3 1 1 1 forever"), (0, 0, 0))
+    r5.attitude(0.0)
+    (ra, dec, roll), moving = r5.attitude(4.0)           # 4s @ 3 deg/s about boresight
+    assert abs(ra - 50.0) < 1e-3 and abs(dec) < 1e-3 and moving, (ra, dec, roll)
+    assert abs(((roll + 12.0 + 180) % 360) - 180) < 1e-2, roll
+    # inertia optional (defaults) and duration parses; asymmetric body actually nutates in dec.
+    r6 = Resolver(parse_commands("point_at 80 0 0\nfree_tumble 4 3 5 forever"), (0, 0, 0))
+    r6.attitude(0.0)
+    (ra1, dec1, _), _ = r6.attitude(3.0)
+    assert abs(dec1) > 0.5, dec1  # boresight has genuinely moved off the equator
     # blank/flash: attitude holds, display_color is exposed.
     r4 = Resolver(parse_commands("point_at 10 0 0\nflash 255 0 0 2\nblank 2"), (0, 0, 0))
     r4.attitude(0.0); r4.attitude(0.001)                 # into the flash

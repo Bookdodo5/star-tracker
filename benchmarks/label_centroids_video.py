@@ -5,7 +5,7 @@ Uses the same C centroid detector the solver uses (detect_centroids in
 libstar_live.dll), so the labels are exactly what the pipeline sees -- not a
 Python reimplementation.
 
-    python scripts/label_centroids_video.py cache/cam.mp4 outputs/cam_centroids.mp4 --morph 0
+    python benchmarks/label_centroids_video.py cache/cam.mp4 outputs/cam_centroids.mp4 --morph 0
 """
 import argparse
 import ctypes

@@ -8,7 +8,7 @@ Four figures, each titled with its conclusion, big fonts, no inside jargon:
   4_sky_path.png         - the flight to the target on the sky
 
 Reuses the parsing/rate machinery from plot_detumble_logs.py.
-Usage: python tools/plot_presentation_figs.py
+Usage: python media/plot_presentation_figs.py
 """
 import os
 import sys

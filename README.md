@@ -70,8 +70,8 @@ centroid/
 identifier/
     src/                      camera_model, identify_tetra, verify, attitude, star_math, catalog_db
     include/                  Headers
-    generated/                Auto-generated C arrays (catalog + TETRA KD-tree); built by tools/
-    tools/                    export_catalog_db.py, export_tetra_db.py (regenerate the DB)
+    generated/                Auto-generated C arrays (catalog + TETRA KD-tree); built by media/
+    media/                    export_catalog_db.py, export_tetra_db.py (regenerate the DB)
 
 src/star_tracker_core.py      Host-side DB construction (imported by the export tools)
 ```

@@ -212,7 +212,7 @@ def main():
                         help="fixed analog gain (disables auto-gain)")
     parser.add_argument("--log", default="run.log", metavar="PATH",
                         help="append all console output to this file (default: run.log; '' to disable). "
-                             "Tail it live with tools/serve_log.py")
+                             "Tail it live with media/serve_log.py")
     args = parser.parse_args()
 
     if args.log:
